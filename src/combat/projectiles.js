@@ -4,13 +4,18 @@
 // silently recover. All entities come from a fixed pool - no per-frame allocs.
 // v2: fire arrows (x0.8 impact, applies burn), fading LineSegments trails,
 // camShake on weak-point hits.
+// Wave F: every hit emits the 'impact' material contract (metal/soil/water -
+// props are not arrow-collidable yet, so wood/stone never classify here), a
+// per-arrow `resolved` flag guarantees one hit resolution max, and damage
+// rules/severity come from combat/damage.js (COMPONENT_RULES + tiers).
 
 import * as THREE from 'three';
 import { bus } from '../core/events.js';
 import { G, CONFIG } from '../core/state.js';
-import { clamp } from '../core/utils.js';
+import { clamp, lerp } from '../core/utils.js';
 import { heightAt } from '../world/terrain.js';
 import { applyBurn, BURN_DURATION } from './status.js';
+import { componentRule, COMPONENT_RULES, checkDamageTiers } from './damage.js';
 
 const MAX_ARROWS = 40;
 const STUCK_LIFE = 25;          // seconds a stuck arrow persists
@@ -39,6 +44,7 @@ const _hitPoint = new THREE.Vector3();
 const _dirN = new THREE.Vector3();
 const _step = new THREE.Vector3();
 const _stick = new THREE.Vector3();
+const _imp = new THREE.Vector3(); // 'impact' event position scratch
 
 let pool = null; // all arrow records (mirrored into G.arrows)
 let rr = 0;      // round-robin cursor for slot selection
@@ -173,6 +179,7 @@ function ensurePool() {
       damage: 0,
       alive: false,
       stuckT: -1, // <0 while flying, >=0 counts seconds since impact
+      resolved: false, // Wave F: set on first hit resolution, one hit per arrow
       fire: false,   // v2: fire arrow (burn on hit)
       woodMat: wood,
       fletchMat: fletch,
@@ -201,6 +208,7 @@ function pickSlot() {
 function deactivate(a) {
   a.alive = false;
   a.stuckT = -1;
+  a.resolved = false; // slot is clean for whoever reclaims it next
   a.mesh.visible = false;
   if (a.trail.lingerT < 0 && a.trail.line.visible) a.trail.lingerT = 0; // fade the ribbon out
 }
@@ -217,8 +225,14 @@ function segmentHitsSphere(p0, p1, center, radius) {
 
 /** Apply damage + events for a confirmed hit, then kill the arrow. */
 function resolveHit(a, machine, wp, center, radius) {
+  if (a.resolved) return; // one-hit guarantee: an arrow never resolves twice
+  a.resolved = true;
   const fire = !!a.fire;
-  const dmg = a.damage * (wp ? wp.multiplier * (G.skills.hunterKiller ? 1.3 : 1) : 1) * (fire ? FIRE_DMG_MULT : 1);
+  const rule = componentRule(machine, wp || null, null);
+  const dmg =
+    a.damage *
+    (wp ? (wp.multiplier ?? COMPONENT_RULES.weakpoint.multiplier) * (G.skills.hunterKiller ? 1.3 : 1) : 1) *
+    (fire ? FIRE_DMG_MULT : 1);
   // Project the segment closest-point outward onto the sphere surface for FX.
   _hitPoint.copy(_closest).sub(center);
   const l = _hitPoint.length();
@@ -226,14 +240,27 @@ function resolveHit(a, machine, wp, center, radius) {
   _hitPoint.add(center);
   const pt = _hitPoint.clone(); // single heap alloc per hit, shared by hit()+FX
   const landed = machine.hit(dmg, pt, wp || null) !== false;
-  // Deflected hits (e.g. the bulwark's front armor) deal zero damage and get
-  // only their own deflect FX - no damage number, hit marker or flesh sound.
+  const spd = clamp(a.vel.length() / CONFIG.arrowMaxPowerSpeed, 0, 1); // 0..1 impact speed
+  const dir = _dirN.copy(a.vel).normalize().clone(); // travel line at contact
   if (!landed) {
+    // Deflected hits (e.g. the bulwark's front armor) deal zero damage and get
+    // only their own deflect FX plus a light metal 'impact' ping - no damage
+    // number, hit marker or flesh sound.
+    bus.emit('impact', { pos: pt, material: 'metal', dir, strength: 0.3 + 0.3 * spd });
     deactivate(a);
     return;
   }
-  // Deflected hits would otherwise bypass armor identity by igniting.
-  if (fire && machine.alive) {
+  bus.emit('impact', {
+    pos: pt,
+    material: 'metal',
+    dir,
+    // Weak-point contacts read harder: rule severity (weakpoint 1.0 vs body
+    // 0.55) plus a flat bonus on top of the arrival-speed ramp.
+    strength: lerp(0.55, 1.0, spd) * rule.fxSeverity + (wp ? 0.25 : 0),
+  });
+  // Deflection already returned above, so igniting here can never bypass armor
+  // identity; the rule carries that immunity as data for future classes.
+  if (fire && machine.alive && rule.burnInteraction !== 'immune') {
     applyBurn(machine, BURN_DURATION * (0.35 + 0.65 * (a.power ?? 1))); // weak or body hits ignite
   }
   bus.emit('machineHit', {
@@ -246,7 +273,26 @@ function resolveHit(a, machine, wp, center, radius) {
   });
   bus.emit('hitMarker', { weak: !!wp });
   if (wp) bus.emit('camShake', { amp: 0.35 }); // weak-point impacts jolt the camera
+  checkDamageTiers(machine); // Wave F: 'machineDamaged' at the 50%/25% crossings
   deactivate(a);
+}
+
+/**
+ * Classify a terrain/water landing and emit the 'impact' contract event.
+ * Water wins whenever the lakebed sits below CONFIG.waterLevel; the splash
+ * point is clamped to the surface even though the arrow itself sticks in the
+ * shallows (kept collectable - v2 behavior preserved).
+ */
+function emitSurfaceImpact(a, groundY) {
+  const water = groundY < CONFIG.waterLevel;
+  const spd = clamp(a.vel.length() / CONFIG.arrowMaxPowerSpeed, 0, 1);
+  _imp.set(a.pos.x, water ? CONFIG.waterLevel : a.pos.y, a.pos.z);
+  bus.emit('impact', {
+    pos: _imp.clone(),
+    material: water ? 'water' : 'soil',
+    dir: _dirN.copy(a.vel).normalize().clone(),
+    strength: water ? lerp(0.3, 0.7, spd) : lerp(0.25, 0.6, spd),
+  });
 }
 
 /** Sweep one flight substep against every alive machine: weak points, then body. */
@@ -309,6 +355,7 @@ function updateFlying(a, dt) {
     const gy = heightAt(a.pos.x, a.pos.z);
     if (a.pos.y <= gy) {
       stickArrow(a, gy);
+      emitSurfaceImpact(a, gy); // Wave F: 'soil'/'water' impact contract event
       return;
     }
   }
@@ -353,6 +400,7 @@ export function spawnArrow({ origin, dir, speed, damage, fire = false, power = 1
   a.damage = damage;
   a.alive = true;
   a.stuckT = -1;
+  a.resolved = false; // fresh flight, one resolution available
   a.fire = fire;
   a.power = power;
   a.woodMat.opacity = 1;

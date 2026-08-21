@@ -1,28 +1,55 @@
 // IRONWILD - hunting spear quick-melee (v3). KeyF swings the spear carried in
 // the right hand ('handR' anchor on the player rig): 2.4u reach inside a
-// +/-55 deg camera-forward cone, 26 body damage / 39 on weak-point contact,
+// +/-55 deg camera-forward cone, 26 body damage / 40 on weak-point contact,
 // 0.8s cooldown, short forward lunge. Damage flows through machine.hit()
 // exactly like arrows do, followed by the same 'machineHit'/'hitMarker'
 // events so FX and audio react identically. The swing pose itself is driven
 // through G.player.meleeT (0..1), consumed by player.js's animator.
+// Wave F: the swing is an explicit three-phase state machine (anticipation ->
+// active -> recovery, data-driven windows in TUNING). Damage resolves ONLY
+// inside the active window, exactly once per strike (strikeId guard), bounded
+// by 'animEvent' markers. Connects emit 'hitstop' - emitted only, the
+// integrator owns the global time dip; recovery is cancellable into a dodge
+// (rule table in updateSpear).
 
 import * as THREE from 'three';
 import { G } from '../core/state.js';
 import { bus } from '../core/events.js';
 import { Input } from '../core/input.js';
-import { clamp } from '../core/utils.js';
+import { clamp, lerp } from '../core/utils.js';
 import { sfx } from '../audio/audio.js';
+import { componentRule, checkDamageTiers } from './damage.js';
 
 // Tuning (ARCHITECTURE_V3.md row melee-spear).
 const MELEE_RANGE = 2.4;                          // sphere-center reach
 const CONE_COS = Math.cos((55 * Math.PI) / 180);  // camera-forward half-angle
 const DMG_BODY = 26;
-const DMG_WEAK = 40;                              // flat bonus on weak-point contact
-const COOLDOWN = 0.8;          // s between swings
+// v3 legacy flat weak-point bonus (26 * ~1.54). Deliberately NOT derived from
+// COMPONENT_RULES.weakpoint.multiplier (2.0) - preserving live numbers beats
+// table purity; the rules table governs severity/FX, arrows carry multipliers.
+const DMG_WEAK = 40;
+const COOLDOWN = 0.8;          // s between swings (counted from the trigger)
 const LUNGE_DIST = 1.2;        // forward lunge distance
 const LUNGE_TIME = 0.15;       // s the lunge lasts
-const SWING_TIME = 0.35;       // s of swing animation (meleeT ramp)
 const CHEST_HEIGHT = 0.9;      // query origin above the feet
+
+// Wave F phase windows (data-driven): damage resolves ONLY during 'active'.
+// Windows total 0.44s against the 0.8s cooldown, keeping v3's neutral gap.
+const TUNING = {
+  anticipation: 0.12, // windup: committed, not cancellable
+  active: 0.10,       // strike window: hit query runs once at its start
+  recovery: 0.22,     // follow-through: cancellable into a dodge only
+  // 'hitstop' payloads on connect; the heavier variant fires when the strike
+  // shatters a weak point. Emitted only - the integrator applies the time dip.
+  hitstop: { duration: 0.06, scale: 0.25 },
+  hitstopBreak: { duration: 0.1, scale: 0.15 },
+};
+
+// meleeT landmarks consumed by player.js's animator (windup < 0.3, strike
+// 0.3-0.62, recover > 0.62): phases map onto them so the visual whip lands
+// exactly inside the damage window.
+const MELEE_T_WINDUP_END = 0.3;
+const MELEE_T_STRIKE_END = 0.62;
 
 // Palette (ARCHITECTURE.md style guide).
 const WOOD_COLOR = 0x6b4a2f;
@@ -41,10 +68,14 @@ let _installed = false;
 let _attached = false;
 let _spearRoot = null;
 
-// Swing state: cooldown countdown, swing-anim clock, lunge clock (<0 = idle).
-let _cdT = 0;
-let _swingT = -1;
-let _lungeT = -1;
+// Swing state machine: 'idle' | 'anticipation' | 'active' | 'recovery'.
+let _phase = 'idle';
+let _phaseT = 0;          // seconds elapsed in the current phase
+let _cdT = 0;             // cooldown countdown (runs from the swing trigger)
+let _lungeT = -1;         // lunge clock (<0 = idle)
+let _strikeId = 0;        // increments per triggered swing
+let _resolvedStrike = -1; // strikeId whose hit query already ran (one-strike-one-resolution)
+let _prevDodging = false; // rising-edge detector for the dodge-cancel
 
 /** Build the low-poly hunting spear: wood shaft, leather binding, steel head. */
 function buildSpearMesh() {
@@ -117,11 +148,13 @@ function contactDist(radius) {
 }
 
 /**
- * Resolve one swing against every alive machine: nearest qualifying weak
+ * Resolve one strike against every alive machine: nearest qualifying weak
  * point first, else nearest body sphere (same priority order as arrows).
- * Each machine is struck at most once per swing. Damage goes through
+ * Each machine is struck at most once per strike. Damage goes through
  * machine.hit exactly like projectiles.js, then the same event pair follows
- * so FX/audio react identically. Returns true when any machine was struck.
+ * so FX/audio react identically. Exactly one 'hitstop' is emitted per strike
+ * that connects, upgraded when a weak point shatters. Returns true when any
+ * machine was struck.
  */
 function applySwingHits() {
   const player = G.player;
@@ -130,6 +163,7 @@ function applySwingHits() {
   _fwd.copy(G.cam.forward); // unit length, refreshed by camera.js this frame
 
   let hitAny = false;
+  let brokeAny = false;
 
   for (let mi = 0; mi < G.machines.length; mi++) {
     const m = G.machines[mi];
@@ -184,6 +218,7 @@ function applySwingHits() {
     // Deflected hits (bulwark front plate) deal zero damage and get only
     // their own deflect FX - no damage number, hit marker or camera jolt.
     if (m.hit(dmg, pt, wp || null) === false) continue; // wp===null -> plain body hit
+    const brokeWeak = !!wp && wp.broken; // part shattered under THIS strike
     bus.emit('machineHit', {
       machine: m,
       point: pt,
@@ -193,18 +228,38 @@ function applySwingHits() {
     });
     bus.emit('hitMarker', { weak: !!wp });
     if (wp) bus.emit('camShake', { amp: 0.35 }); // weak-point impacts jolt, like arrows
+    checkDamageTiers(m); // Wave F: 'machineDamaged' at the 50%/25% crossings
     hitAny = true;
+    // A shatter upgrades the strike's hitstop; the component rule vetoes the
+    // upgrade for classes whose parts report breaks without truly shattering.
+    if (brokeWeak && componentRule(m, wp || null, pt).canBreak) brokeAny = true;
   }
 
+  if (hitAny) {
+    bus.emit('hitstop', brokeAny ? TUNING.hitstopBreak : TUNING.hitstop);
+  }
   return hitAny;
 }
 
-/** Trigger one swing: cooldown, whoosh, lunge vector, instant hit query. */
+/** Trigger one swing: cooldown, whoosh, then ride out the anticipation window. */
 function startSwing(player) {
   _cdT = COOLDOWN;
-  _swingT = 0;
+  _strikeId++;
+  _phase = 'anticipation';
+  _phaseT = 0;
   player.meleeT = 0;
-  sfx('dodge'); // reused filtered-noise sweep reads as a melee whoosh
+  sfx('dodge'); // reused filtered-noise sweep reads as a melee whoosh (v3 placement)
+}
+
+/**
+ * Anticipation -> active boundary: emit the anim marker, start the forward
+ * lunge (it belongs to the thrust, not the windup), and resolve the strike
+ * exactly once via the strikeId guard.
+ */
+function enterActive() {
+  _phase = 'active';
+  _phaseT = 0;
+  bus.emit('animEvent', { name: 'spear_active_begin', source: 'spear', data: { strikeId: _strikeId } });
 
   // Lunge along the camera's horizontal forward.
   _lungeDir.set(G.cam.forward.x, 0, G.cam.forward.z);
@@ -212,11 +267,25 @@ function startSwing(player) {
   _lungeDir.normalize();
   _lungeT = 0;
 
-  const hitAny = applySwingHits();
-  bus.emit('meleeSwing', { hit: hitAny });
+  if (_resolvedStrike !== _strikeId) { // structural guard: one resolution per strike
+    _resolvedStrike = _strikeId;
+    const hitAny = applySwingHits();
+    bus.emit('meleeSwing', { hit: hitAny });
+  }
 }
 
-/** Frame update; dt is already time-scaled by main.js (runs after bow step). */
+/**
+ * Frame update; dt is already time-scaled by main.js (runs after bow step).
+ *
+ * Cancel rule table (Wave F):
+ *   anticipation + KeyF      -> ignored (cooldown gate)
+ *   anticipation + dodge     -> NOT cancellable (commitment window)
+ *   active       + anything  -> NOT cancellable (damage resolving this frame)
+ *   recovery     + dodge     -> CANCELS into the dodge: pose channel drops,
+ *                               thrust lunge cut short, strike stays resolved
+ *   death while anticipating -> hard reset (a corpse never resolves a strike)
+ *   pause / frozen frame     -> state held (no dt), resumes cleanly
+ */
 export function updateSpear(dt) {
   tryAttach();
 
@@ -224,23 +293,54 @@ export function updateSpear(dt) {
   if (!player) return;
   if (!(dt > 0)) return; // paused/frozen frame: hold all swing state
 
-  // Trigger: KeyF, gated on swimming / bow drawing / cooldown (row contract).
+  // Trigger: KeyF, gated on swimming / bow drawing / cooldown / idle phase.
   if (
     !player.dead && G.started && !G.paused && !G.gameOver &&
     Input.pressed('KeyF') && _cdT <= 0 &&
+    _phase === 'idle' &&
     !player.swimming && !player.drawing
   ) {
     startSwing(player);
   }
 
-  // Swing anim channel 0..1, consumed by player.js's arm/torso animator.
-  if (_swingT >= 0) {
-    _swingT += dt;
-    if (_swingT >= SWING_TIME) {
-      _swingT = -1;
+  // Dodge-cancel: rising edge of player.dodging during recovery only.
+  const dodging = !!player.dodging;
+  const dodgeStarted = dodging && !_prevDodging;
+  _prevDodging = dodging;
+  if (_phase === 'recovery' && dodgeStarted) {
+    _phase = 'idle';
+    _phaseT = 0;
+    player.meleeT = 0;
+    _lungeT = -1; // cut the thrust step; dodge velocity takes over
+  }
+
+  // Death during anticipation: cancel before any damage could resolve.
+  if (_phase === 'anticipation' && player.dead) {
+    _phase = 'idle';
+    _phaseT = 0;
+    player.meleeT = 0;
+  }
+
+  // Phase progression drives both the pose channel and the window boundaries.
+  if (_phase === 'anticipation') {
+    _phaseT += dt;
+    player.meleeT = lerp(0, MELEE_T_WINDUP_END, clamp(_phaseT / TUNING.anticipation, 0, 1));
+    if (_phaseT >= TUNING.anticipation) enterActive();
+  } else if (_phase === 'active') {
+    _phaseT += dt;
+    player.meleeT = lerp(MELEE_T_WINDUP_END, MELEE_T_STRIKE_END, clamp(_phaseT / TUNING.active, 0, 1));
+    if (_phaseT >= TUNING.active) {
+      _phase = 'recovery';
+      _phaseT = 0;
+      bus.emit('animEvent', { name: 'spear_active_end', source: 'spear', data: { strikeId: _strikeId } });
+    }
+  } else if (_phase === 'recovery') {
+    _phaseT += dt;
+    player.meleeT = lerp(MELEE_T_STRIKE_END, 1, clamp(_phaseT / TUNING.recovery, 0, 1));
+    if (_phaseT >= TUNING.recovery) {
+      _phase = 'idle';
+      _phaseT = 0;
       player.meleeT = 0;
-    } else {
-      player.meleeT = clamp(_swingT / SWING_TIME, 0, 1);
     }
   } else if (player.meleeT !== 0) {
     player.meleeT = 0; // keep the channel clean after death/pause edge cases

@@ -3,6 +3,11 @@
 // basis written by camera.js and delegates ballistics to combat/projectiles.js.
 // v2: KeyX or mouse wheel toggles standard/fire arrows (fire consumes its own
 // inventory pool).
+// Wave F: explicit draw/release state machine (idle -> drawing -> full ->
+// release -> idle) emitting 'bowState' {state, power} on every transition,
+// camera recoil through the existing 'camShake' contract plus a short settle
+// fed into the sway channel, soft aim-assist magnetism driven by
+// G.settings.aimAssist, and getBowFeedback() for HUD consumption.
 
 import * as THREE from 'three';
 import { G, CONFIG } from '../core/state.js';
@@ -21,6 +26,17 @@ const CONVERGE_DIST = 45;      // crosshair convergence distance (m)
 const NOTIFY_THROTTLE = 2.0;   // s between "Out of arrows" toasts
 const WHEEL_NOTCH = 100;       // deltaY of wheel travel that counts as one notch
 const WHEEL_COOLDOWN = 0.15;   // s between wheel-driven arrow-type swaps
+
+// Wave F tuning: release lag / recoil / settle / assist cone. The draw timing
+// itself stays data-driven from CONFIG.drawTimeFull (+ steadyAim modifier).
+const TUNING = {
+  releaseLag: 0.12,        // s the 'release' state holds before settling idle
+  recoilAmp: 0.09,         // camShake amplitude on loose (camera clamps 0..1)
+  recoilTime: 0.14,        // s of camera shake decay fed to camShake
+  settleTime: 0.3,         // s of residual aim-settle after a shot
+  settleBoost: 1.6,        // peak settle sway as a multiple of SWAY_AMPLITUDE
+  assistHalfAngleDeg: 4.0, // aim-assist magnetism cone half-angle
+};
 
 // Palette (ARCHITECTURE.md style guide).
 const WOOD_COLOR = 0x6b4a2f;
@@ -45,6 +61,8 @@ const _converge = new THREE.Vector3();
 const _mid = new THREE.Vector3();
 const _seg = new THREE.Vector3();
 const _up = new THREE.Vector3(0, 1, 0);
+const _assistC = new THREE.Vector3(); // weak-point world center scratch
+const _assistD = new THREE.Vector3(); // origin -> weak-point direction scratch
 
 // Module state.
 let _lmbDown = false;
@@ -64,6 +82,13 @@ let _wheelAccum = 0;           // wheel deltaY banked toward the next notch
 let _lastWheelSwap = -Infinity;
 let _nockedFletchMat = null;   // tinted to show the selected arrow type
 
+// Wave F draw/release state machine: 'idle' | 'drawing' | 'full' | 'release'.
+let _state = 'idle';
+let _releaseT = 0;             // countdown inside the 'release' state
+let _settleT = 0;              // post-shot settle clock feeding the sway channel
+let _fbCache = null;           // getBowFeedback() memo (one target scan per frame)
+let _fbCacheFrame = -Infinity;
+
 function onMouseDown(e) { if (e.button === 0) _lmbDown = true; }
 function onMouseUp(e) { if (e.button === 0) _lmbDown = false; }
 function onBlur() { _lmbDown = false; }
@@ -76,19 +101,36 @@ export function createBow() {
   window.addEventListener('mousedown', onMouseDown);
   window.addEventListener('mouseup', onMouseUp);
   window.addEventListener('blur', onBlur);
+  // Persisted setting owned by this module: merged defensively so boot never
+  // depends on ui/settings.js having created the key first (0 = off).
+  if (G.settings.aimAssist === undefined) G.settings.aimAssist = 0;
   // Contract (see updateBow): pausing mid-draw silently cancels the shot.
   // updateBow never runs while paused, so the cancel happens at the source.
   bus.on('ui', ({ action }) => {
-    if (action === 'pause' && (_drawing || _drawT > 0)) {
-      _drawT = 0;
-      _drawing = false;
-    }
+    if (action === 'pause') cancelDraw();
   });
+}
+
+/** Force the draw back to idle (pause / aim drop / dry let-down) and say so once. */
+function cancelDraw() {
+  if (_state === 'idle' && _drawT <= 0 && !_drawing) return;
+  _drawT = 0;
+  _drawing = false;
+  setBowState('idle', 0);
+}
+
+/** State-machine transition helper: emits 'bowState' only on real changes. */
+function setBowState(state, power = 0) {
+  if (_state === state) return;
+  _state = state;
+  _fbCacheFrame = -Infinity; // cached feedback carries the state - invalidate
+  bus.emit('bowState', { state, power });
 }
 
 /** Per-frame draw/release logic + string/nock animation. dt is already time-scaled. */
 export function updateBow(dt) {
   tryAttach();
+  if (!Number.isFinite(dt)) dt = 0; // defensive: never let a bad frame poison any channel
 
   const player = G.player;
   const active = !!player && !player.dead && G.started && !G.paused && !G.gameOver;
@@ -118,20 +160,37 @@ export function updateBow(dt) {
 
   const wantDraw = aiming && _lmbDown && hasAmmo;
   if (wantDraw) {
-    if (!_drawing) sfx('bowDraw');
+    if (!_drawing) {
+      sfx('bowDraw');
+      setBowState('drawing', _drawT); // fresh draw out of idle (or after let-down)
+    }
     const full = CONFIG.drawTimeFull * (G.skills.steadyAim ? 0.65 : 1);
-    if (!Number.isFinite(dt)) dt = 0; // defensive: never let a bad frame poison the draw
     _drawT = clamp(_drawT + dt / full, 0, 1);
     _drawing = true;
+    if (_drawT >= 1 && _state === 'drawing') setBowState('full', 1);
   } else if (_drawing) {
     // Fire only on a real release (button up or aim dropped); pausing or
-    // dying mid-draw silently cancels.
+    // dying mid-draw silently cancels instead.
     if (active && (!_lmbDown || !aiming) && hasAmmo && _drawT > FIRE_THRESHOLD) {
-      fire();
+      const power = smoothstep(0, 1, _drawT);
+      fire(power); // arrow leaves this exact frame - v3 shot timing preserved
+      _releaseT = TUNING.releaseLag;
+      _settleT = TUNING.settleTime;
+      setBowState('release', power);
+    } else {
+      setBowState('idle', 0); // dry let-down below threshold, or inactive cancel
     }
     _drawT = 0;
     _drawing = false;
   }
+
+  // Release lag: cosmetic hold while the string snaps home, then back to idle.
+  if (_state === 'release') {
+    _releaseT -= dt;
+    if (_releaseT <= 0) setBowState('idle', 0);
+  }
+  // Post-shot settle decays even while idle; fast follow-ups inherit it.
+  if (_settleT > 0) _settleT = Math.max(0, _settleT - dt);
 
   // Dry click with an empty quiver (both pools).
   if (aiming && _lmbDown && !_prevLmb && !hasAmmo) {
@@ -181,8 +240,14 @@ function toggleArrowType() {
   }
 }
 
-function fire() {
-  const power = smoothstep(0, 1, _drawT);
+/** Residual post-shot wobble folded into the sway channel (recoil settle). */
+function settleSway() {
+  return _settleT > 0
+    ? SWAY_AMPLITUDE * (TUNING.settleBoost - 1) * (_settleT / TUNING.settleTime)
+    : 0;
+}
+
+function fire(power = smoothstep(0, 1, _drawT)) {
   const steady = !!G.skills.steadyAim;
 
   // Converge the fire line with the crosshair: the arrow leaves from the
@@ -191,8 +256,10 @@ function fire() {
   // along the camera ray instead — arrows land where the crosshair sits.
   _dir.copy(G.cam.aimDir);
   if (!steady) {
-    // Sway shrinks to zero at full draw; two phase-shifted axes wobble.
-    const amp = SWAY_AMPLITUDE * (1 - _drawT);
+    // Sway shrinks to zero at full draw; two phase-shifted axes wobble. A
+    // just-fired bow adds a decaying settle term (Wave F recoil); steadyAim
+    // skips both, as it always has.
+    const amp = SWAY_AMPLITUDE * (1 - _drawT) + settleSway();
     _camUp.crossVectors(G.cam.right, G.cam.aimDir).normalize();
     _dir.addScaledVector(G.cam.right, Math.sin(G.elapsed * SWAY_FREQ) * amp);
     _dir.addScaledVector(_camUp, Math.cos(G.elapsed * SWAY_FREQ) * amp);
@@ -218,6 +285,9 @@ function fire() {
     ? G.camera.position.clone().addScaledVector(_dir, 1.05)
     : G.cam.aimOrigin.clone();
   const dir = _dir.clone();
+  // Soft magnetism toward a weak point in the assist cone; off by default and
+  // only ever applied to the fired line when the setting is > 0.
+  if ((G.settings.aimAssist ?? 0) > 0) dir.copy(computeAssistAdjust(origin, dir));
   spawnArrow({ origin, dir, speed, damage, fire: useFire, power });
   if (useFire) {
     G.inventory.fireArrows--;
@@ -230,6 +300,80 @@ function fire() {
   }
   bus.emit('arrowFired', { origin, dir, power });
   sfx('bowRelease');
+  // Recoil: small camera jolt through the existing camShake contract (the
+  // visual settle rides the sway channel above - no camera.js edits needed).
+  bus.emit('camShake', { amp: TUNING.recoilAmp, time: TUNING.recoilTime });
+}
+
+// --- Wave F: aim assist + HUD feedback ---------------------------------------
+
+/**
+ * Best alive weak point inside the assist cone ahead of `dir` (smallest angle
+ * first, nearest as tie-break). Returns { machine, wp, cos, dist } or null.
+ * Pure read against live weak-point meshes - safe on any frame.
+ */
+function findAssistTarget(origin, dir) {
+  if (!G.machines || !dir || dir.lengthSq() < 0.5) return null; // unnormalized basis
+  const cosMin = Math.cos((TUNING.assistHalfAngleDeg * Math.PI) / 180);
+  let best = null;
+  let bestCos = cosMin;
+  let bestDist = Infinity;
+  for (let mi = 0; mi < G.machines.length; mi++) {
+    const m = G.machines[mi];
+    if (!m.alive || !m.weakPoints) continue;
+    for (let wi = 0; wi < m.weakPoints.length; wi++) {
+      const wp = m.weakPoints[wi];
+      if (wp.broken || !wp.mesh) continue; // same skip rules as projectile hits
+      wp.mesh.getWorldPosition(_assistC);
+      _assistD.subVectors(_assistC, origin);
+      const dist = _assistD.length();
+      if (dist < 1e-4) continue;
+      const c = _assistD.multiplyScalar(1 / dist).dot(dir);
+      if (c > bestCos || (c === bestCos && dist < bestDist)) {
+        bestCos = c;
+        bestDist = dist;
+        best = { machine: m, wp, cos: c, dist };
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * Soft-magnetism aim assist: rotate a copy of `dir` toward the best
+ * weak-point sphere in a narrow cone ahead of the shot. Strength comes from
+ * G.settings.aimAssist (0..1, default 0 = off, merged defensively at boot);
+ * the pull fades linearly from full at dead-center to zero at the cone edge.
+ * Returns a NEW vector - the inputs are never mutated. fire() only applies it
+ * to the fired line when the setting is > 0.
+ */
+export function computeAssistAdjust(origin, dir) {
+  const out = dir.clone();
+  const raw = G.settings.aimAssist;
+  const strength = clamp(Number.isFinite(raw) ? raw : 0, 0, 1);
+  if (strength <= 0) return out;
+  const target = findAssistTarget(origin, dir);
+  if (!target) return out;
+  const cosMin = Math.cos((TUNING.assistHalfAngleDeg * Math.PI) / 180);
+  const falloff = clamp((target.cos - cosMin) / (1 - cosMin), 0, 1); // 0 edge -> 1 center
+  target.wp.mesh.getWorldPosition(_assistC);
+  _assistD.subVectors(_assistC, origin).normalize();
+  return out.lerp(_assistD, strength * falloff).normalize();
+}
+
+/**
+ * Cheap per-frame bow status for HUD consumption:
+ *   { state, power, targetAligned:boolean }
+ * targetAligned is true when a weak point sits inside the assist cone right
+ * now - independent of the aimAssist setting value. Memoized per gameplay
+ * frame (one target scan max); treat the returned object as read-only.
+ */
+export function getBowFeedback() {
+  if (_fbCache && _fbCacheFrame === G.elapsed) return _fbCache;
+  const target = findAssistTarget(G.cam.aimOrigin, G.cam.aimDir);
+  _fbCache = { state: _state, power: _drawT, targetAligned: !!target };
+  _fbCacheFrame = G.elapsed;
+  return _fbCache;
 }
 
 function tryAttach() {

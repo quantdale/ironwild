@@ -1,11 +1,13 @@
-// IRONWILD - machine status effects (v2): burn damage-over-time.
-// Fire arrows apply burn via applyBurn(); main.js drives updateStatusFX(dt).
-// State lives as flat scalars on the machine object (per-machine scalar timer,
-// zero allocations in the update loop). Burn also raises the panic flag that
+// IRONWILD - machine status effects: minimal data-driven framework (Wave F)
+// with burn as its first registered entry. Fire arrows apply burn via
+// applyBurn(); main.js drives updateStatusFX(dt). Per-machine state lives as
+// flat scalars under machine._stat[id] = { t, acc } - zero allocations in the
+// update loop after first application. Burn also raises the panic flag that
 // machines/ai.js reads to make the victim flee briefly.
 
 import * as THREE from 'three';
 import { G } from '../core/state.js';
+import { checkDamageTiers } from './damage.js';
 
 export const BURN_DPS = 12;   // burn damage per second
 export const BURN_DURATION = 4; // seconds of burn per application (refreshed on re-hit)
@@ -21,6 +23,38 @@ const _pt = new THREE.Vector3();
 let inited = false;
 let ticks = [];
 let tickCursor = 0;
+
+// ------------------------------------------------------------------ registry
+// Minimal status-effect framework: id -> descriptor, iterated in registration
+// order by updateStatusFX. New statuses (chill, shock, ...) register here and
+// inherit the tick loop, catch-up guard and corpse cleanup for free.
+//   tickInterval  seconds between application ticks
+//   duration      default seconds when applied without an override
+//   begin(m,dur)  called on start/refresh (re-arm side flags)
+//   tick(m)       apply one tick; return false to stop ticking this machine
+//   sustain(m,t)  per-frame follow-through while active (t = seconds left)
+//   expire(m)     called when the timer runs out or the holder dies
+const STATUSES = new Map();
+
+/**
+ * Register a status descriptor under `id`. Registration order == update
+ * order; 'burn' registers first at module load. Descriptors must provide
+ * tickInterval and tick(); the loop feature-detects the optional hooks.
+ */
+export function registerStatus(id, desc) {
+  STATUSES.set(id, desc);
+}
+
+/** Lazily create the flat scalar store for one status on one machine. */
+function statusStore(m, id) {
+  if (!m._stat) m._stat = {};
+  let st = m._stat[id];
+  if (!st) {
+    st = { t: 0, acc: 0 }; // t = seconds remaining, acc = progress to next tick
+    m._stat[id] = st;
+  }
+  return st;
+}
 
 // ------------------------------------------------------------- tick numbers
 
@@ -88,6 +122,38 @@ function updateTickNumbers(dt) {
 
 // ------------------------------------------------------------------ public
 
+// First registered status: burn. Numbers and panic behavior are byte-for-byte
+// the v2 values - only the storage/tick plumbing moved into the framework.
+registerStatus('burn', {
+  tickInterval: TICK_INTERVAL,
+  duration: BURN_DURATION,
+  begin(m, dur) {
+    // AI flee flag lasts exactly as long as the flames (machines/ai.js reads it).
+    m.panicT = dur;
+    m.panic = true;
+  },
+  tick(m) {
+    _pt.copy(m.group.position);
+    _pt.y += 1.2 + m.radius * 0.5;
+    // point=null: the exact-center tick point would land inside the bulwark's
+    // front-cone test (machines.js isFrontConeHit) and deflect every tick.
+    const landed = m.hit(TICK_DMG, null, null) !== false; // may kill the machine
+    if (landed) {
+      spawnTickNumber(TICK_DMG, _pt);
+      checkDamageTiers(m); // burn ticks drive the 50%/25% 'machineDamaged' tiers too
+    }
+    return m.alive;
+  },
+  sustain(m, tLeft) {
+    m.panicT = tLeft; // panic stays aligned with the remaining flames
+    m.panic = true;
+  },
+  expire(m) {
+    m.panicT = 0;
+    m.panic = false;
+  },
+});
+
 /**
  * Ignite a machine: BURN_DPS for `seconds`, refreshed (timer restarted) on
  * every re-hit. Raises m.panic / m.panicT for the AI flee-briefly behavior.
@@ -96,14 +162,11 @@ function updateTickNumbers(dt) {
 export function applyBurn(machine, seconds = BURN_DURATION) {
   if (!machine || !machine.alive || typeof machine.hit !== 'function') return false;
   const dur = seconds > 0 ? seconds : BURN_DURATION;
-  if (machine.burnT === undefined) {
-    machine.burnT = 0;   // scalar seconds of burn remaining
-    machine.burnAcc = 0; // partial progress toward the next tick
-  }
-  machine.burnT = dur;   // refresh: restart the full timer
-  machine.burnAcc = 0;   // ...and the tick accumulator, so the next tick lands a full interval out
-  machine.panicT = dur;  // consumed by machines/ai.js (flee briefly)
-  machine.panic = true;
+  const st = statusStore(machine, 'burn');
+  st.t = dur; // refresh: restart the full timer...
+  st.acc = 0; // ...and the tick accumulator, so the next tick lands a full interval out
+  const desc = STATUSES.get('burn');
+  if (desc && typeof desc.begin === 'function') desc.begin(machine, dur);
   if (!inited && G.scene) createStatusFX();
   return true;
 }
@@ -120,53 +183,45 @@ export function createStatusFX() {
 }
 
 /**
- * Advance burn on every machine + tick-number FX. dt is the scaled gameplay
- * delta from main.js. Damage routes through machine.hit so death/loot/events
- * stay identical to arrow kills.
+ * Advance every registered status on every machine + tick-number FX. dt is
+ * the scaled gameplay delta from main.js. Damage routes through machine.hit
+ * so death/loot/events stay identical to arrow kills.
  */
 export function updateStatusFX(dt) {
   if (!inited) createStatusFX();
   if (inited && dt > 0) updateTickNumbers(dt);
   if (!(dt > 0) || !G.machines) return;
 
-  for (let i = 0; i < G.machines.length; i++) {
-    const m = G.machines[i];
-    if (m.burnT === undefined || m.burnT <= 0) continue;
-    if (!m.alive) { // corpses do not keep burning
-      m.burnT = 0;
-      m.panicT = 0;
-      m.panic = false;
-      continue;
-    }
-    // Only time actually spent burning accrues ticks, so a frame that outlasts
-    // the remaining burn still lands every fully-elapsed interval within it.
-    const burnSeconds = Math.min(dt, m.burnT);
-    m.burnT -= dt;
-    m.burnAcc += burnSeconds;
-    let guard = MAX_TICKS_PER_FRAME; // cap catch-up work after huge frame gaps
-    while (m.burnAcc >= TICK_INTERVAL && m.alive && guard-- > 0) {
-      m.burnAcc -= TICK_INTERVAL;
-      _pt.copy(m.group.position);
-      _pt.y += 1.2 + m.radius * 0.5;
-      // point=null: the exact-center tick point would land inside the bulwark's
-      // front-cone test (machines.js isFrontConeHit) and deflect every tick.
-      const landed = m.hit(TICK_DMG, null, null) !== false; // may kill the machine
-      if (landed) spawnTickNumber(TICK_DMG, _pt);
-      if (!m.alive) { // killed by this tick: drop burn state now, not next pass
-        m.burnT = 0;
-        m.burnAcc = 0;
-        m.panicT = 0;
-        m.panic = false;
-        break;
+  for (const [id, desc] of STATUSES) {
+    for (let i = 0; i < G.machines.length; i++) {
+      const m = G.machines[i];
+      const st = m._stat ? m._stat[id] : null;
+      if (!st || st.t <= 0) continue;
+      if (!m.alive) { // corpses do not keep status effects running
+        st.t = 0;
+        st.acc = 0;
+        if (desc.expire) desc.expire(m);
+        continue;
       }
-    }
-    if (m.burnT <= 0 || !m.alive) {
-      m.burnT = Math.max(0, m.burnT);
-      m.panicT = m.burnT;
-      m.panic = m.burnT > 0 && m.alive;
-    } else {
-      m.panicT = m.burnT; // panic lasts exactly as long as the flames
-      m.panic = true;
+      // Only time actually spent in the status accrues ticks, so a frame that
+      // outlasts the remaining duration still lands every fully-elapsed
+      // interval within it.
+      const activeSeconds = Math.min(dt, st.t);
+      st.t -= dt;
+      st.acc += activeSeconds;
+      let guard = MAX_TICKS_PER_FRAME; // cap catch-up work after huge frame gaps
+      let ended = false;
+      while (st.acc >= desc.tickInterval && typeof desc.tick === 'function' && m.alive && guard-- > 0) {
+        st.acc -= desc.tickInterval;
+        if (desc.tick(m) === false) ended = true; // descriptor dropped it early
+      }
+      if (ended || !m.alive || st.t <= 0) { // killed mid-tick or ran out: drop state now, not next pass
+        st.t = Math.max(0, st.t);
+        st.acc = 0;
+        if (desc.expire) desc.expire(m);
+      } else if (desc.sustain) {
+        desc.sustain(m, st.t); // per-frame follow-through with the time left
+      }
     }
   }
 }

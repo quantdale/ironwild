@@ -4,6 +4,9 @@
 // oil-splatter decals (v2, orange-tinted on fire hits).
 // Everything is preallocated in createDamageFX(); the per-frame update only
 // reuses pool entries - no allocations in hot loops.
+// Wave F: this module also hosts the shared damage-resolution data consulted
+// by every weapon path - COMPONENT_RULES (part-class table), componentRule()
+// lookup and checkDamageTiers() hp-threshold events ('machineDamaged').
 
 import * as THREE from 'three';
 import { bus } from '../core/events.js';
@@ -47,6 +50,101 @@ let splatCursor = 0;
 let smokeTex = null;
 let splatTex = null;
 let ringGeo = null;
+
+// --------------------------------------------- shared damage-resolution data
+// Wave F: every weapon-side damage path (arrows, spear thrusts, burn ticks)
+// consults this table instead of hard-coding component behavior. The
+// machine.hit() contract itself stays untouched - these rules only pre-scale
+// caller-side numbers and pick FX/event severity.
+//   multiplier       fallback damage multiplier when a part carries none
+//   canBreak         whether the class participates in break resolution
+//   breakBehavior    FX hint on break ('shatter' | 'burst' | null)
+//   lootOnBreak      container-only: drop loot when broken (reserved)
+//   burnInteraction  'amplified' = full-length ignite, 'normal',
+//                    'immune' (deflected armor never ignites - v2 rule, now data)
+//   fxSeverity       0..1+ bias for 'impact'-strength / hitstop payloads
+export const COMPONENT_RULES = {
+  weakpoint: {
+    multiplier: 2.0,
+    canBreak: true,
+    breakBehavior: 'shatter',
+    burnInteraction: 'amplified',
+    fxSeverity: 1.0,
+  },
+  armor: {
+    multiplier: 0,
+    canBreak: false,
+    breakBehavior: null,
+    burnInteraction: 'immune',
+    fxSeverity: 0.4,
+  },
+  container: { // reserved: no machine ships container parts yet
+    multiplier: 1.0,
+    canBreak: true,
+    breakBehavior: 'burst',
+    lootOnBreak: true,
+    burnInteraction: 'normal',
+    fxSeverity: 0.8,
+  },
+  body: { // default class for body-sphere contact
+    multiplier: 1.0,
+    canBreak: false,
+    breakBehavior: null,
+    burnInteraction: 'normal',
+    fxSeverity: 0.55,
+  },
+};
+
+/**
+ * Rule lookup for a contact: returns { key, ...rule }. Falls back to 'body'.
+ * Heuristic part-class selection: unbroken weak points are 'weakpoint'; the
+ * bulwark's front plate reads as 'armor' (same +/-60 deg facing cone as
+ * machines.js isFrontConeHit); everything else is plain 'body'. Good enough
+ * for FX/severity decisions - never used to override real damage numbers.
+ */
+export function componentRule(machine, weakPoint, point) {
+  let key = 'body';
+  if (weakPoint && !weakPoint.broken) {
+    key = 'weakpoint';
+  } else if (
+    machine && machine.type === 'bulwark' && machine.group && point &&
+    typeof point.x === 'number'
+  ) {
+    const dx = point.x - machine.group.position.x;
+    const dz = point.z - machine.group.position.z;
+    const len = Math.sqrt(dx * dx + dz * dz);
+    if (len < 0.0001 || (Math.sin(machine.group.rotation.y) * dx + Math.cos(machine.group.rotation.y) * dz) / len > 0.5) {
+      key = 'armor';
+    }
+  }
+  return { key, ...COMPONENT_RULES[key] };
+}
+
+// hp-threshold tiers: tier 1 fires crossing 50%, tier 2 crossing 25% of maxHp.
+const TIER_HP_FRAC = [0.5, 0.25];
+const _tierLastHp = new WeakMap(); // machine -> last observed hp (auto-GC'd)
+
+/**
+ * Threshold hook: after any resolved damage application, emit
+ * 'machineDamaged' {machine, tier:1|2} once per tier when hp crosses 50%/25%
+ * of maxHp. Unseen machines baseline at maxHp (they spawn at full health), so
+ * the first hit that dips below a threshold still counts as a crossing.
+ * Corpses are skipped - death feedback owns that moment. Callers: projectiles,
+ * spear and the status tick loop, i.e. every path that lands real damage.
+ */
+export function checkDamageTiers(machine) {
+  if (!machine || !Number.isFinite(machine.hp) || !(machine.maxHp > 0)) return;
+  const hp = Math.max(machine.hp, 0);
+  const prevHp = _tierLastHp.has(machine) ? _tierLastHp.get(machine) : machine.maxHp;
+  _tierLastHp.set(machine, hp);
+  if (!machine.alive) return;
+  for (let t = 0; t < TIER_HP_FRAC.length; t++) {
+    const line = machine.maxHp * TIER_HP_FRAC[t];
+    if (prevHp > line && hp <= line) {
+      bus.emit('machineDamaged', { machine, tier: t + 1 });
+    }
+  }
+}
 
 // ---------------------------------------------------------------- numbers
 
