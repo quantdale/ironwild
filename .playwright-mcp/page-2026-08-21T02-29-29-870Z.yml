@@ -1,0 +1,67 @@
+- generic [active] [ref=e1]:
+  - generic:
+    - generic: ➶20 / 40
+    - generic:
+      - generic:
+        - generic: WOOD
+        - generic: "8"
+      - generic:
+        - generic: SHARDS
+        - generic: "0"
+      - generic:
+        - generic: OIL
+        - generic: "0"
+      - generic:
+        - generic: MEDICINE
+        - generic: "2"
+    - generic:
+      - generic:
+        - generic: W
+        - generic: NW
+        - generic: "N"
+        - generic: NE
+        - generic: E
+        - generic: SE
+        - generic: S
+        - generic: SW
+        - generic: W
+        - generic: NW
+        - generic: "N"
+        - generic: NE
+        - generic: E
+    - generic: Hunt machines • Gather resources
+  - generic [ref=e5] [cursor=pointer]:
+    - generic [ref=e6]: IRONWILD
+    - generic [ref=e7]: The machines remember.
+    - generic [ref=e8]:
+      - generic [ref=e9]: WASD
+      - generic [ref=e10]: Move
+      - generic [ref=e11]: MOUSE
+      - generic [ref=e12]: Look
+      - generic [ref=e13]: HOLD LMB
+      - generic [ref=e14]: Draw bow / loose arrow
+      - generic [ref=e15]: RMB
+      - generic [ref=e16]: Aim
+      - generic [ref=e17]: SHIFT
+      - generic [ref=e18]: Sprint
+      - generic [ref=e19]: SPACE
+      - generic [ref=e20]: Jump
+      - generic [ref=e21]: E
+      - generic [ref=e22]: Interact
+      - generic [ref=e23]: H
+      - generic [ref=e24]: Use medicine
+      - generic [ref=e25]: HOLD Q
+      - generic [ref=e26]: Focus scan
+      - generic [ref=e27]: I
+      - generic [ref=e28]: Inventory
+      - generic [ref=e29]: TAB
+      - generic [ref=e30]: Skills
+      - generic [ref=e31]: ESC
+      - generic [ref=e32]: Pause
+    - generic [ref=e33]: CLICK TO BEGIN
+  - generic:
+    - generic:
+      - generic: YOU DIED
+      - generic: The wild reclaims all.
+      - button "RESTART" [ref=e34] [cursor=pointer]
+  - generic: "[Q] FOCUS"

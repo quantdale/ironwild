@@ -1,0 +1,10 @@
+[     581ms] [WARNING] The AudioContext was not allowed to start. It must be resumed (or created) after a user gesture on the page. https://developer.chrome.com/blog/autoplay/#web_audio @ http://localhost:4173/assets/index-B01m7ZWm.js:3836
+[     581ms] [WARNING] The AudioContext was not allowed to start. It must be resumed (or created) after a user gesture on the page. https://developer.chrome.com/blog/autoplay/#web_audio @ http://localhost:4173/assets/index-B01m7ZWm.js:3836
+[     581ms] [WARNING] The AudioContext was not allowed to start. It must be resumed (or created) after a user gesture on the page. https://developer.chrome.com/blog/autoplay/#web_audio @ http://localhost:4173/assets/index-B01m7ZWm.js:3836
+[     583ms] [WARNING] The AudioContext was not allowed to start. It must be resumed (or created) after a user gesture on the page. https://developer.chrome.com/blog/autoplay/#web_audio @ http://localhost:4173/assets/index-B01m7ZWm.js:3836
+[     583ms] [WARNING] The AudioContext was not allowed to start. It must be resumed (or created) after a user gesture on the page. https://developer.chrome.com/blog/autoplay/#web_audio @ http://localhost:4173/assets/index-B01m7ZWm.js:3836
+[     583ms] [WARNING] The AudioContext was not allowed to start. It must be resumed (or created) after a user gesture on the page. https://developer.chrome.com/blog/autoplay/#web_audio @ http://localhost:4173/assets/index-B01m7ZWm.js:3836
+[     583ms] [WARNING] The AudioContext was not allowed to start. It must be resumed (or created) after a user gesture on the page. https://developer.chrome.com/blog/autoplay/#web_audio @ http://localhost:4173/assets/index-B01m7ZWm.js:3836
+[    1336ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:4173/favicon.ico:0
+[   33190ms] The root document of this element is not valid for pointer lock.
+[   33378ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:4173/favicon.ico:0
