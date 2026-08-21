@@ -232,7 +232,12 @@ function applySwingHits() {
     hitAny = true;
     // A shatter upgrades the strike's hitstop; the component rule vetoes the
     // upgrade for classes whose parts report breaks without truly shattering.
-    if (brokeWeak && componentRule(m, wp || null, pt).canBreak) brokeAny = true;
+    // The rule MUST be asked with the part's pre-break class identity: the
+    // just-shattered weak point already carries broken=true, which componentRule
+    // would classify as plain 'body' (canBreak:false) - making the upgraded
+    // hitstop unreachable. Cloning with broken:false keeps the data-table veto
+    // intact for classes that legitimately lack canBreak.
+    if (brokeWeak && componentRule(m, { ...wp, broken: false }, pt).canBreak) brokeAny = true;
   }
 
   if (hitAny) {
@@ -296,7 +301,7 @@ export function updateSpear(dt) {
   // Trigger: KeyF, gated on swimming / bow drawing / cooldown / idle phase.
   if (
     !player.dead && G.started && !G.paused && !G.gameOver &&
-    Input.pressed('KeyF') && _cdT <= 0 &&
+    Input.wasActionPressed('melee') && _cdT <= 0 &&
     _phase === 'idle' &&
     !player.swimming && !player.drawing
   ) {

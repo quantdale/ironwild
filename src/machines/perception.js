@@ -183,6 +183,9 @@ export function createPerception() {
         losQueue.push(bb);
       }
     }
+    // Publish the verdict actually used this think: the blackboard field used
+    // to stay false forever (local-only variable), lying to any reader.
+    bb.visible = visible;
 
     if (visible) {
       if (bb.lastSeenPlayerPos) bb.lastSeenPlayerPos.copy(p.pos);
@@ -229,11 +232,13 @@ export function createPerception() {
         bb.lostTargetTimer >= INVESTIGATE_TIME + SEARCH_TIME) {
         bb.phase = 'lost';
         bb.investigationPoint = null;
-      }
+        bb.pendingSeekPos = null; // dead thread: an armed hint would send the
+      }                           // FSM chasing a long-stale position
     } else if (bb.phase !== 'lost') {
       // faded below seek: whatever we were doing, we lost the thread
       bb.phase = 'lost';
       bb.investigationPoint = null;
+      bb.pendingSeekPos = null; // same rule as the search-timeout path above
       bb.lostTargetTimer = 0;
     }
 

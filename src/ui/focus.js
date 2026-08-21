@@ -82,7 +82,7 @@ export function updateFocus(dt) {
 
   if (scanning) {
     // Edge case: pause/gameOver/death mid-scan or key released -> force off.
-    if (!can || !Input.down('KeyQ')) {
+    if (!can || !Input.isAction('focus')) { // v5: level read via action layer
       deactivate();
     } else {
       fraction -= dt / (CONFIG.focusDuration * (G.skills.deepFocus ? 1.5 : 1));
@@ -95,7 +95,7 @@ export function updateFocus(dt) {
       }
     }
   } else {
-    if (can && Input.down('KeyQ') && fraction > MIN_ACTIVATE) {
+    if (can && Input.isAction('focus') && fraction > MIN_ACTIVATE) { // v5: action layer
       activate();
     } else {
       if (regenDelay > 0) regenDelay -= dt;

@@ -1101,7 +1101,7 @@ export function updateProps(dt) {
     activePrompt = want;
     bus.emit('prompt', { text: want });
   }
-  if (best && Input.pressed('KeyE')) {
+  if (best && Input.wasActionPressed('interact')) { // v5: action layer - rebinding/gamepad affect pickup
     const amount = G.skills.scavenger ? 2 : 1;
     G.inventory[best.type] += amount;
     if (best.mesh.parent) G.scene.remove(best.mesh);

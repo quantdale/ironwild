@@ -6,6 +6,11 @@
 // tag next to the ammo counter.
 // v3: slim XP bar pinned directly above the health bar (violet fill, 'LV n'
 // badge), pulsing on 'xpGain'.
+// v5 (gap 3B): consumes player/bow.js's 'bowState' FSM events as emphasis
+// classes on the existing reticle (#iw-xh), and adopts the persisted uiScale
+// setting by transform-scaling only the corner-pinned widgets (never the
+// fullscreen vignette/grain layers or the screen-center crosshair), via the
+// pure computeUiScale() resolver over window.__IW_A11Y / G.settings.
 // Pure DOM + inline SVG; polls G each frame with raw dt for UI anims.
 
 import * as THREE from 'three';
@@ -32,6 +37,26 @@ const STREAK_T = 1.3;             // kill-streak popup lifetime (s)
 const LOW_HP = 0.35;              // desaturation ramp kicks in below this hp fraction
 const DESAT_MAX = 0.85;           // grayscale ceiling at 0 hp
 const XP_PULSE_T = 0.45;          // v3 xp-bar pulse duration (s), matches CSS keyframes
+
+// v5 uiScale band - mirrors a11y.js clampNum(G.settings.uiScale, 0.85, 1.3, 1)
+// exactly so both consumers of the same setting can never disagree.
+const UI_SCALE_MIN = 0.85;
+const UI_SCALE_MAX = 1.3;
+// Widgets that follow uiScale: [els key, inline transform prefix that preserves
+// the stylesheet centering scale() would otherwise override, transform-origin].
+// Only corner-pinned clusters are listed: the fullscreen layers (#iw-desat,
+// #iw-cine, #iw-grain) must keep covering the viewport, and the screen-center
+// widgets (#iw-xh/#iw-hitdir/#iw-hm/#iw-kb/#iw-streak) animate their own inline
+// transforms every frame and must stay pixel-centered.
+const SCALED_WIDGETS = [
+  ['bars', '', 'left bottom'],
+  ['ammo', '', 'right bottom'],
+  ['res', '', 'right top'],
+  ['obj', '', 'left top'],
+  ['compass', 'translateX(-50%) ', 'center top'],
+  ['toasts', 'translateX(-50%) ', 'center top'],
+  ['prompt', 'translateX(-50%) ', 'center bottom'],
+];
 
 const CARDINALS = { 0: 'N', 45: 'NE', 90: 'E', 135: 'SE', 180: 'S', 225: 'SW', 270: 'W', 315: 'NW' };
 
@@ -64,8 +89,33 @@ let xpPulseT = -1;                // xp-bar pulse age, -1 = idle
 let xpFracCache = -1;             // applied xp fill percent (one decimal)
 let lvCache = '';                 // applied 'LV n' badge text
 
+// v5 animation state
+let bowPhase = 'idle';            // mirror of player/bow.js's FSM, fed by 'bowState'
+let uiScaleCache = null;          // last scale applied to SCALED_WIDGETS (null = never)
+
 const _v = new THREE.Vector3();     // scratch, reused
 const _hdPos = new THREE.Vector3(); // world pos of the last damage source
+
+/**
+ * Pure resolver for the effective HUD scale (v5 gap 3B; exported for units).
+ * Priority follows the publishing chain: a11y.js's live window.__IW_A11Y
+ * snapshot first (it holds the applied value every other consumer shares),
+ * then the raw persisted setting, then 1. Non-finite counts as absent - the
+ * ?? operator the publishing convention suggests would happily pass NaN/±Inf
+ * through and poison style.scale() - and the result is re-clamped to a11y.js's
+ * 0.85..1.3 band so a hand-edited save cannot blow up the layout. Kept
+ * side-effect-free and DOM-free so it is unit-testable in plain node.
+ * @param {{uiScale?:number}|null|undefined} settings G.settings-shaped input
+ * @param {{uiScale?:number}|null|undefined} a11y window.__IW_A11Y-shaped input
+ * @returns {number} scale clamped to [UI_SCALE_MIN, UI_SCALE_MAX]
+ */
+export function computeUiScale(settings, a11y) {
+  let raw;
+  if (a11y && Number.isFinite(a11y.uiScale)) raw = a11y.uiScale;
+  else if (settings && Number.isFinite(settings.uiScale)) raw = settings.uiScale;
+  else raw = 1;
+  return Math.min(UI_SCALE_MAX, Math.max(UI_SCALE_MIN, raw));
+}
 
 export function createHUD() {
   if (created) return;
@@ -80,6 +130,17 @@ export function createHUD() {
   bus.on('machineDied', onMachineDied);
   bus.on('killStreak', onKillStreak);
   bus.on('xpGain', onXpGain);
+  // v5 gap 3B consumers: bow draw-state reticle emphasis + uiScale adoption.
+  bus.on('bowState', onBowState);
+  // settingsChanged gives instant feedback even while the frame loop is paused;
+  // a11y.js republishes __IW_A11Y from its own listener, and because main.js
+  // boots createHUD before createA11y our handler runs first - so instead of
+  // racing it we re-read whatever is published now and let the per-frame guard
+  // in updateHUD settle any ordering skew on the next tick.
+  bus.on('settingsChanged', ({ key } = {}) => {
+    if (key === 'uiScale') refreshUiScale();
+  });
+  refreshUiScale(); // persisted scale may already be in G.settings at boot
 }
 
 export function updateHUD(dt) {
@@ -91,6 +152,11 @@ export function updateHUD(dt) {
     hudShown = show;
     els.root.classList.toggle('show', show);
   }
+
+  // v5 uiScale guard: costs one pure clamp per frame and self-heals any
+  // listener-ordering skew between our settingsChanged handler and a11y.js's
+  // __IW_A11Y republish (createHUD boots before createA11y in main.js).
+  refreshUiScale();
 
   // toast aging (raw dt)
   for (let i = toasts.length - 1; i >= 0; i--) {
@@ -303,6 +369,46 @@ function onXpGain() {
   void els.xpBar.offsetWidth; // force reflow so rapid gains restart the animation
   els.xpBar.classList.add('pulse');
   xpPulseT = 0;
+}
+
+/**
+ * v5 gap 3B 'bowState' consumer (player/bow.js emits {state,power} on every FSM
+ * transition). Maps the state onto emphasis classes of the EXISTING reticle:
+ * the arc fill itself stays polled from p.drawT in updateHUD because power
+ * advances continuously while bowState only fires on transitions. Invalid or
+ * malformed payloads keep the last known phase - a bad event must never blank
+ * or corrupt the crosshair. Classes are static (no keyframes), so users with
+ * reduceFlashing get no additional motion.
+ */
+function onBowState(b) {
+  const s = b && typeof b.state === 'string' ? b.state : null;
+  if (s !== 'idle' && s !== 'drawing' && s !== 'full' && s !== 'release') return;
+  if (s === bowPhase) return; // bus may repeat a state; classList churn is waste
+  bowPhase = s;
+  els.xh.classList.toggle('drawing', s === 'drawing');
+  els.xh.classList.toggle('full', s === 'full');
+  els.xh.classList.toggle('release', s === 'release');
+}
+
+/**
+ * v5 uiScale adoption: re-resolve the effective scale and restyle the pinned
+ * widgets only on change (the cache keeps the per-frame call trivial). At
+ * scale 1 inline transforms are cleared entirely, leaving the stylesheet -
+ * and therefore the pre-campaign look - byte-identical. Centering prefixes
+ * come from SCALED_WIDGETS because an inline transform would otherwise
+ * override the stylesheet translateX(-50%) that keeps those widgets centered.
+ * minimap.js anchors on #iw-res's getBoundingClientRect(), which reflects
+ * transforms, so the scaled readout drags the minimap along for free.
+ */
+function refreshUiScale() {
+  if (!els) return;
+  const snap = typeof window === 'undefined' ? null : window.__IW_A11Y;
+  const s = computeUiScale(G.settings, snap);
+  if (s === uiScaleCache) return;
+  uiScaleCache = s;
+  for (const [key, prefix] of SCALED_WIDGETS) {
+    els[key].style.transform = s === 1 ? '' : `${prefix}scale(${s})`;
+  }
 }
 
 /** Thin red arc around the crosshair pointing at the last damage source. */
@@ -519,6 +625,11 @@ function buildDom() {
     desat, hitdir, hdSvg, kb, streak,
     xpBar, xpFill, xpLv,
   };
+
+  // v5: anchor each scalable widget at the corner it is pinned to so
+  // refreshUiScale's scale() grows it inward/outward from its own anchor
+  // instead of drifting across the screen.
+  for (const [key, , origin] of SCALED_WIDGETS) els[key].style.transformOrigin = origin;
 }
 
 function injectStyles() {
@@ -607,6 +718,18 @@ function injectStyles() {
   stroke-dasharray:${RET_C.toFixed(1)};stroke-dashoffset:${RET_C.toFixed(1)};
   transform:rotate(-90deg);transform-origin:36px 36px;}
 .iw-retick{stroke:#59e3ff;stroke-width:2;}
+
+/* v5 gap 3B: 'bowState' emphasis classes on #iw-xh, driven by hud.js's bus
+   consumer. Static styles only - no keyframes - so reduceFlashing gains no
+   extra motion; high-contrast mode swaps the hue cue for a thicker achromatic
+   outline per the a11y publishing contract. */
+#iw-xh.drawing .iw-retick{stroke:#aef0ff;}
+#iw-xh.full .iw-retarc{stroke:#8ff2ff;}
+#iw-xh.full .iw-retick{stroke:#ffffff;}
+#iw-xh.release .iw-retarc{stroke:#d7fbff;}
+body.iw-high-contrast #iw-xh.drawing .iw-retarc,
+body.iw-high-contrast #iw-xh.full .iw-retarc{stroke:#ffffff;stroke-width:5;}
+body.iw-high-contrast #iw-xh.full .iw-retbg{stroke:rgba(255,255,255,.55);}
 
 /* v2 hit-direction arc around the crosshair */
 #iw-hitdir{position:absolute;left:50%;top:50%;width:96px;height:96px;

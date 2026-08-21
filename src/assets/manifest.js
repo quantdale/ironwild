@@ -4,7 +4,8 @@
 // needs to be copied to `ASSET_ROOT + <category>/<id>.glb` - no loader code
 // changes. Until then systems/assets.js routes every miss to the procedural
 // fallback (entry.fallback === 'procedural'); nothing here is fetched at boot
-// because every entry ships with preload:false.
+// because every entry is a url:null placeholder with preload:false - load()
+// rejects fast without touching any loader until a real url is authored.
 //
 // Authoring rules (mirrored in ASSET_CONVENTIONS, enforced loosely by
 // systems/assets.js at runtime):
@@ -69,7 +70,11 @@ export const ASSET_MANIFEST = {
   machines: {
     skitter: {
       id: 'skitter',
-      url: ASSET_ROOT + 'machines/skitter.glb',
+      // url:null = binary not authored yet. The pipeline treats this as a
+      // permanent placeholder state (never fetches, never marks failed); when
+      // art lands, restore the canonical path 'machines/skitter.glb' below.
+      // Keeping nulls here is what makes zero-asset boot deterministic.
+      url: null, // ASSET_ROOT + 'machines/skitter.glb'
       lods: null,
       clips: ['loc_idle', 'loc_walk_fwd', 'loc_run_fwd', 'react_hit', 'react_death'],
       sockets: ['socket_jaw'],
@@ -80,7 +85,8 @@ export const ASSET_MANIFEST = {
     },
     ironmaw: {
       id: 'ironmaw',
-      url: ASSET_ROOT + 'machines/ironmaw.glb',
+      // Unauthored placeholder - see skitter note above.
+      url: null, // ASSET_ROOT + 'machines/ironmaw.glb'
       lods: null,
       clips: ['loc_idle', 'loc_walk_fwd', 'loc_run_fwd', 'react_hit', 'react_death'],
       sockets: ['socket_jaw', 'socket_spine'],
@@ -93,7 +99,8 @@ export const ASSET_MANIFEST = {
       // Aerial machine: ground locomotion clips are expected-but-optional;
       // authored kit may replace them with flight cycles under the same names.
       id: 'duskwing',
-      url: ASSET_ROOT + 'machines/duskwing.glb',
+      // Unauthored placeholder - see skitter note above.
+      url: null, // ASSET_ROOT + 'machines/duskwing.glb'
       lods: null,
       clips: ['loc_idle', 'loc_walk_fwd', 'loc_run_fwd', 'react_hit', 'react_death'],
       sockets: ['socket_beak'],
@@ -106,7 +113,8 @@ export const ASSET_MANIFEST = {
   player: {
     hunter: {
       id: 'hunter',
-      url: ASSET_ROOT + 'player/hunter.glb',
+      // Unauthored placeholder - see skitter note above.
+      url: null, // ASSET_ROOT + 'player/hunter.glb'
       lods: null,
       clips: [
         'loc_idle', 'loc_walk_fwd', 'loc_run_fwd', 'loc_crouch_fwd', 'loc_swim_fwd',
@@ -124,7 +132,8 @@ export const ASSET_MANIFEST = {
     ruin_kit: {
       // Static kit of modular ruin pieces; no animation, no sockets.
       id: 'ruin_kit',
-      url: ASSET_ROOT + 'env/ruin_kit.glb',
+      // Unauthored placeholder - see skitter note above.
+      url: null, // ASSET_ROOT + 'env/ruin_kit.glb'
       lods: null,
       clips: [],
       sockets: [],

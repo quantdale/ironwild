@@ -8,12 +8,18 @@
 // props are not arrow-collidable yet, so wood/stone never classify here), a
 // per-arrow `resolved` flag guarantees one hit resolution max, and damage
 // rules/severity come from combat/damage.js (COMPONENT_RULES + tiers).
+// Gap 3D: terrain landings now classify 'stone' on highland-biome ground via
+// the pure biomeAt() lookup (see emitSurfaceImpact for the full decision tree
+// and its residual limits). One-impact-per-hit is structural: resolveHit's
+// resolved guard covers BOTH outcomes (landed + deflected) and deactivate()
+// only clears the flag when the slot is recycled, so a resolved arrow can
+// never emit a second time.
 
 import * as THREE from 'three';
 import { bus } from '../core/events.js';
 import { G, CONFIG } from '../core/state.js';
 import { clamp, lerp } from '../core/utils.js';
-import { heightAt } from '../world/terrain.js';
+import { heightAt, biomeAt } from '../world/terrain.js';
 import { applyBurn, BURN_DURATION } from './status.js';
 import { componentRule, COMPONENT_RULES, checkDamageTiers } from './damage.js';
 
@@ -286,10 +292,26 @@ function resolveHit(a, machine, wp, center, radius) {
 function emitSurfaceImpact(a, groundY) {
   const water = groundY < CONFIG.waterLevel;
   const spd = clamp(a.vel.length() / CONFIG.arrowMaxPowerSpeed, 0, 1);
+  // Gap 3D classification tree - cheap, no new raycasts / scene traversal:
+  //   machine sphere contact     -> 'metal' (resolveHit; the only geometry
+  //                                 arrows collide with)
+  //   lakebed below water level  -> 'water' (splash clamped to the surface)
+  //   highland-biome landing     -> 'stone' (biomeAt is a pure seeded-fbm
+  //                                 lookup, same cost class as heightAt)
+  //   every other landing        -> 'soil'
+  // Residual limits, stated honestly: instanced props/ruins have no arrow
+  // collision, so the contract's mesh-name branches ('log'/'branch' -> wood,
+  // 'rock'/'ruin' -> stone) are unreachable in THIS path - a rock model
+  // standing on meadow ground reads 'soil', and stones outside the highland
+  // biome classify by ground biome, not by what was visually struck. Machine
+  // contacts are always 'metal' whatever part class they hit.
+  const material = water || biomeAt(a.pos.x, a.pos.z) !== 'highland'
+    ? (water ? 'water' : 'soil')
+    : 'stone';
   _imp.set(a.pos.x, water ? CONFIG.waterLevel : a.pos.y, a.pos.z);
   bus.emit('impact', {
     pos: _imp.clone(),
-    material: water ? 'water' : 'soil',
+    material,
     dir: _dirN.copy(a.vel).normalize().clone(),
     strength: water ? lerp(0.3, 0.7, spd) : lerp(0.25, 0.6, spd),
   });

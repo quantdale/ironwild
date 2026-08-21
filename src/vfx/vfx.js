@@ -34,9 +34,11 @@ const FLASH_CAP = 32;
 const RING_CAP = 16;
 
 // Hard global unit budget (sparks/debris/smoke/flashes/rings each count as 1).
-// Class caps sum to 880 < 900, so pure single-class spam stays legal and the
-// global cap only binds mixed loads, exactly where contention hurts.
-const MAX_ACTIVE = SPARK_CAP + DEBRIS_CAP + SMOKE_CAP + FLASH_CAP + RING_CAP;
+// Class caps sum to 880, deliberately BELOW this 900 ceiling: single-class
+// spam always fits its own cap, so the global budget only ever binds mixed
+// loads - exactly where contention hurts - while leaving a small safety
+// margin should a future class be added without retuning every cap.
+const MAX_ACTIVE = 900;
 
 // Camera-distance emission bands (squared units): full nearby, decimated far,
 // nothing beyond 140u - off-screen fights cost literally zero particles.
@@ -283,6 +285,10 @@ export function spawnEffect(kind, opts = {}) {
   const spin = opts.spin != null ? opts.spin : 9;
   _c.setHex(opts.color != null ? opts.color : def.color);
 
+  // Count ACTUAL acquisitions: acquireSlot may refuse some or all units
+  // (budget exhaustion, never-punch-down), and callers like fxRainSplash and
+  // the tests branch on the truth. Returning the pre-loop request would lie.
+  let spawned = 0;
   for (let k = 0; k < n; k++) {
     const i = acquireSlot(pool, pri);
     if (i < 0) break;
@@ -310,13 +316,14 @@ export function spawnEffect(kind, opts = {}) {
     pool.drag[i] = drag;
     pool.grav[i] = grav;
     pool.pri[i] = pri;
+    spawned++;
   }
 
   // Spawn-time GPU mirrors: colors feed the point-sprite attribute directly,
   // instanceColor feeds the debris tint. Upload flags are cheap to re-set.
   if (kind === 'spark') sparkGeo.attributes.aColor.needsUpdate = true;
   else if (kind === 'debris' && debrisMesh && debrisMesh.instanceColor) debrisMesh.instanceColor.needsUpdate = true;
-  return n;
+  return spawned;
 }
 
 // --- simulation -------------------------------------------------------------

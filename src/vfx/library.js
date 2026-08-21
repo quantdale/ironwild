@@ -38,7 +38,7 @@ const MATERIALS = new Set(['metal', 'stone', 'soil', 'wood', 'water']); // impac
  * opts: { pos: {x,y,z} (required), strength?: number (~0.25..2) }
  */
 export function fxArrowImpact(material, opts = {}) {
-  const pos = opts.pos;
+  const pos = opts && opts.pos; // null/primitive opts must degrade to no-op
   if (!pos || typeof pos.x !== 'number') return;
   const s = clamp(Number(opts.strength) || 1, 0.25, 2);
   switch (material) {
@@ -208,7 +208,11 @@ function updatePlumes(dt) {
       continue;
     }
     const gp = m.group.position;
-    rec.acc += dt;
+    // Backlog cap: the guard below limits puffs PER FRAME, but without clamping
+    // acc itself one long hitch (updateLibrary receives raw, unclamped dt)
+    // leaves acc inflated and pins emission at max rate for dozens of frames
+    // AFTER the hitch - the exact artifact the guard was meant to prevent.
+    rec.acc = Math.min(rec.acc + dt, rec.cfg.interval * 4);
     let guard = 0; // hitch clamp: at most 4 catch-up puffs per frame
     while (rec.acc >= rec.cfg.interval && guard++ < 4) {
       rec.acc -= rec.cfg.interval;

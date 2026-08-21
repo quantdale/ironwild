@@ -39,7 +39,8 @@ const STEP = 0.03;              // scale change per confirmed decision
 const RECOVERY_STEP = 0.01;     // gentle climb back while comfortable
 const RECOVERY_AFTER = 4.0;     // seconds continuously in-band before recovery
 const QUANTUM = 0.05;           // applied-ratio rounding step (see applyRatio)
-const DT_CLAMP_S = 0.25;        // ignore absurd spikes (tab resume) in averages
+const DT_CLAMP_S = 0.25;        // deltas above this are gaps, not rendered frames
+                                // (tab resume / debugger pause) - dropped whole
 
 // Per-quality scale bounds. Upper bounds below 1.0 keep the medium/low presets
 // from ever exceeding their own intended resolution ceilings.
@@ -105,6 +106,11 @@ function applyRatio(force) {
   const b = boundsFor(G.settings && G.settings.quality);
   const raw = basePR * clamp(scale, b.lo, b.hi);
   const ratio = Math.max(QUANTUM, Math.round(raw / QUANTUM) * QUANTUM);
+  // Publish BEFORE the dedup gate: adjacent internal scales can quantize into
+  // the same pixel-ratio bucket (0.67 and 0.65 both -> 1.0 at basePR 1.5).
+  // Skipping the redundant setPixelRatio is correct; letting the shared
+  // __IW_DYNRES_SCALE contract lag a bucket behind getScale() is not.
+  publish();
   if (!force && Math.abs(ratio - appliedRatio) < QUANTUM * 0.5) return;
   appliedRatio = ratio;
   try {
@@ -115,7 +121,6 @@ function applyRatio(force) {
       composer.setPixelRatio(ratio);
     } catch (_) { /* composer swapped mid-flight: renderer is still scaled */ }
   }
-  publish();
 }
 
 /** One control decision from the current moving average (ms). */
@@ -235,7 +240,18 @@ export function updateDynRes(rawDt) {
 
   const dt = Number(rawDt);
   if (!Number.isFinite(dt) || dt <= 0) return;
-  const ms = Math.min(dt * 1000, DT_CLAMP_S * 1000);
+  // A delta larger than the clamp ceiling is a GAP (tab switch, debugger halt,
+  // hitch storm), not a rendered frame. It must be dropped whole, exactly like
+  // the paused path drops its frames: clamping it into the average would still
+  // poison a warmup window with one fake 250ms sample, and feeding raw dt to
+  // decisionT below would mint a storm of stale-average decisions after every
+  // long gap (each one able to confirm a step). Reset instead - the first real
+  // frame back starts a fresh window, mirroring resume-from-pause semantics.
+  if (dt > DT_CLAMP_S) {
+    resetAveraging();
+    return;
+  }
+  const ms = dt * 1000;
 
   if (avgCount < AVG_WINDOW) avgCount++;
   else avgSum -= avgBuf[avgHead];

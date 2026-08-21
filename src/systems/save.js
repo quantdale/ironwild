@@ -198,7 +198,7 @@ export function updateSave(dt) {
 
   if (!G.started || G.gameOver) return;
 
-  if (Input.pressed('KeyP')) saveGame(true);
+  if (Input.wasActionPressed('quicksave')) saveGame(true); // v5: action layer
 
   autosaveT += dt;
   if (autosaveT >= AUTOSAVE_INTERVAL) {

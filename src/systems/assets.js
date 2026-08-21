@@ -55,6 +55,11 @@ const warned = new Set();      // warn-once registry
 const refs = new Map();        // id -> live clone count
 const evictTimers = new Map(); // id -> pending eviction timeout handle
 
+// Test-only injection point for the network/decode layer (see
+// __setLoaderForTests below). Null in production - every branch it gates is
+// dead code at runtime.
+let testLoader = null;
+
 // Disposal bookkeeping: one binary can be cached under several keys ('<id>'
 // and '<id>@lod1'), so WeakSets prevent double-disposing shared resources.
 const disposedGeometries = new WeakSet();
@@ -155,48 +160,84 @@ function loadKeyed(key, url, entry) {
     return Promise.reject(new Error(`[assets] '${key}' failed earlier this session`));
   }
 
-  const loader = entry.draco ? ensureDracoPipeline() : ensureBaseLoader();
-  if (!loader) {
-    failKey(key, entry, 'loader unavailable');
-    return Promise.reject(new Error(`[assets] '${key}': loader unavailable`));
+  let pendingLoad;
+  if (testLoader) {
+    // Test seam: same await contract as GLTFLoader.loadAsync; the fake may
+    // return a plain value, hence Promise.resolve.
+    pendingLoad = Promise.resolve(testLoader(url, key, entry));
+  } else {
+    const loader = entry.draco ? ensureDracoPipeline() : ensureBaseLoader();
+    if (!loader) {
+      failKey(key, entry, 'loader unavailable');
+      return Promise.reject(new Error(`[assets] '${key}': loader unavailable`));
+    }
+    pendingLoad = loader.loadAsync(url);
   }
 
-  const promise = loader.loadAsync(url).then((gltf) => {
-    const scene = gltf.scene || (Array.isArray(gltf.scenes) && gltf.scenes[0]);
-    if (!scene || !scene.isObject3D) throw new Error('glTF has no scene');
-    cache.set(key, { entry, gltf });
-    inflight.delete(key);
-    return gltf;
-  }, (err) => {
-    inflight.delete(key);
-    failKey(key, entry, err);
-    throw err instanceof Error ? err : new Error(String(err));
-  });
+  // Unified settlement: BOTH network rejection and a malformed-payload throw
+  // from validation must flow through ONE catch. Previously validation threw
+  // inside the fulfillment handler where the sibling rejection handler could
+  // not see it - skipping failKey() entirely AND leaking the inflight entry
+  // (stats.loading stuck >0, no warn, no failed flag).
+  const promise = pendingLoad
+    .then((gltf) => {
+      const scene = gltf.scene || (Array.isArray(gltf.scenes) && gltf.scenes[0]);
+      if (!scene || !scene.isObject3D) throw new Error('glTF has no scene');
+      cache.set(key, { entry, gltf });
+      inflight.delete(key);
+      return gltf;
+    })
+    .catch((err) => {
+      inflight.delete(key);
+      failKey(key, entry, err);
+      throw err instanceof Error ? err : new Error(String(err));
+    });
   inflight.set(key, promise);
   return promise;
 }
 
 // --- public API -------------------------------------------------------------
 
+/**
+ * Test-only DI seam: replaces the underlying load implementation so unit
+ * tests can drive dedupe/caching/failure/refcount paths deterministically
+ * without real binaries or three-loader mocks (production never calls this;
+ * the variable stays null and the production branch is unchanged).
+ *   fn(url, key, entry) -> Promise<glTF-like {scene, animations}> | value
+ */
+export function __setLoaderForTests(fn) {
+  testLoader = typeof fn === 'function' ? fn : null;
+}
+
 /** Load (and cache) the glTF for a manifest id. Rejects on unknown/unauthored. */
 export function load(id) {
   const entry = getEntry(id);
   if (!entry) return Promise.reject(new Error(`[assets] unknown asset id '${id}'`));
   if (!entry.url) {
-    failKey(id, entry, 'not authored yet (manifest url is null)');
+    // Not-authored is a PERMANENT placeholder state, not a session failure:
+    // reject fast without touching any loader and WITHOUT failKey(), so
+    // entry.failed / getStats().failed stay reserved for real load errors
+    // (404s, decode crashes) and repeated attempts cost nothing. The Error
+    // itself is the signal - no console noise for an expected state.
     return Promise.reject(new Error(`[assets] '${id}' is not authored yet`));
   }
   return loadKeyed(id, entry.url, entry);
 }
 
-/** Fire-and-forget warmup. Errors are already warned+flagged inside load(). */
+/**
+ * Fire-and-forget warmup. Errors are already warned+flagged inside load().
+ * Unauthored placeholders are skipped outright (no rejection to swallow):
+ * initAssets() accounts them as 'pending' instead of 'available'.
+ */
 export function preload(ids) {
   for (const id of toArray(ids)) {
     if (typeof id !== 'string' || !id) continue;
-    if (!getEntry(id)) {
+    const entry = getEntry(id);
+    if (!entry) {
       warnOnce('unknown:' + id, `[assets] preload skipped unknown id '${id}'`);
       continue;
     }
+    if (!entry.url) continue; // nothing to fetch until art lands
     load(id).catch(() => {});
   }
 }
@@ -210,6 +251,10 @@ export function prefetch(ids) {
   for (const id of toArray(ids)) {
     if (typeof id !== 'string' || !id) continue;
     if (queued.has(id) || cache.has(id) || inflight.has(id) || failedKeys.has(id)) continue;
+    const entry = getEntry(id);
+    // Enqueue-time guard mirrors preload(): unauthored placeholders never
+    // enter the queue, so the idle drain can't even attempt them.
+    if (!entry || !entry.url) continue;
     queued.add(id);
     queue.push(id);
   }
@@ -249,19 +294,24 @@ function isSkinned(root) {
   return skinned;
 }
 
-/** Keep only the requested `_lodN` child (falls back to lod0 / first present). */
+/**
+ * Keep only the requested `_lodN` child (falls back to lod0 / first present).
+ * Returns the level kept, or null for single-resolution assets - resolveLod()
+ * re-exports this for direct unit coverage of the suffix convention.
+ */
 function pruneLods(root, want) {
   const levels = [];
   for (const child of root.children) {
     const m = child.name.match(LOD_RE);
     if (m) levels.push({ node: child, level: Number(m[1]) });
   }
-  if (!levels.length) return; // single-resolution asset
+  if (!levels.length) return null; // single-resolution asset
   let pick = levels.find((l) => l.level === want);
   if (!pick) pick = levels.find((l) => l.level === 0) || levels[0];
   for (const l of levels) {
     if (l.node !== pick.node) root.remove(l.node); // clone-local: cache copy untouched
   }
+  return pick.level;
 }
 
 function collectByPrefix(root, prefix) {
@@ -286,6 +336,39 @@ function indexClips(animations) {
     if (clip && clip.name) map[clip.name] = clip;
   }
   return map;
+}
+
+// --- exported pure convention helpers ---------------------------------------
+//
+// instantiate() resolves authoring conventions onto clone.userData via these
+// walkers. They are exported so the naming contract (socket_*/wp_*/_lodN/
+// clip names) is directly unit-testable without mocking three's loaders or
+// shipping binaries - the resolution logic is pure scene-graph walking.
+
+/**
+ * Walk `root` (inclusive) and index the manifest conventions:
+ *   sockets    every node named 'socket_*' -> { name -> Object3D }
+ *              (duplicate names: last traversal occurrence wins)
+ *   weakPoints every node named 'wp_*'     -> [{ name, node }]
+ *   clips      animations array            -> { clipName -> AnimationClip }
+ */
+export function collectMetadata(root, animations) {
+  return {
+    sockets: collectByPrefix(root, 'socket_'),
+    weakPoints: collectWeakPoints(root),
+    clips: indexClips(animations),
+  };
+}
+
+/**
+ * LOD suffix selection per the `_lodN` child convention: keeps exactly one
+ * suffixed child (exact level, else lod0, else first present), removes the
+ * rest from THIS root only. Returns the kept level, or null when root has no
+ * suffixed children (single-resolution asset - untouched).
+ */
+export function resolveLod(root, lod) {
+  const want = Number.isFinite(lod) ? Math.max(0, Math.floor(lod)) : 0;
+  return pruneLods(root, want);
 }
 
 /**
@@ -331,12 +414,12 @@ export async function instantiate(id, opts) {
   }
 
   Object.assign(clone.userData, source.userData); // authoring metadata rides along
-  pruneLods(clone, lod);
+  // Prune BEFORE collecting: a removed _lodN subtree must not surface as
+  // sockets/weak points. Same order the inline walkers used previously.
+  resolveLod(clone, lod);
   clone.userData.assetId = id;
   clone.userData.lod = lod;
-  clone.userData.sockets = collectByPrefix(clone, 'socket_');
-  clone.userData.weakPoints = collectWeakPoints(clone);
-  clone.userData.clips = indexClips(record.gltf.animations);
+  Object.assign(clone.userData, collectMetadata(clone, record.gltf.animations));
   return clone;
 }
 
@@ -410,8 +493,11 @@ function disposeDeep(root) {
 
 /**
  * Boot-time setup. Never throws: a broken asset subsystem must not take the
- * game down with it. Returns { available, pending } - counts of manifest
- * entries still loadable this session and loads currently in flight.
+ * game down with it. Returns { available, pending } - manifest entries that
+ * are loadable this session (authored url, not failed) vs entries still
+ * awaiting authoring (url:null placeholders). Loaders are built lazily and
+ * feature-detected (KTX2 only with a renderer, Draco only for draco:true
+ * entries), so a zero-asset boot constructs the minimum and fetches nothing.
  */
 export function initAssets(options) {
   const out = { available: 0, pending: 0 };
@@ -422,13 +508,19 @@ export function initAssets(options) {
     ensureKtx2(lastRenderer);
     validateManifest();
     let available = 0;
+    let pending = 0;
     for (const category of Object.values(ASSET_MANIFEST)) {
       for (const entry of Object.values(category)) {
-        if (entry && entry.url && !entry.failed && !failedKeys.has(entry.id)) available++;
+        if (!entry) continue;
+        // 'pending' = not-authored placeholder: neither loadable nor failed.
+        // This is the expected state until art ships, so it must not inflate
+        // the failure count or trip any boot-time warning.
+        if (!entry.url) { pending++; continue; }
+        if (!entry.failed && !failedKeys.has(entry.id)) available++;
       }
     }
     out.available = available;
-    out.pending = inflight.size;
+    out.pending = pending;
   } catch (err) {
     console.error('[assets] initAssets failed:', (err && err.message) || err);
   }

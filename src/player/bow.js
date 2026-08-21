@@ -137,7 +137,7 @@ export function updateBow(dt) {
   const aiming = active && G.cam.aiming;
 
   // v2: KeyX or mouse wheel swaps arrow type; switching INTO fire needs stock.
-  if (active && Input.pressed('KeyX')) toggleArrowType();
+  if (active && Input.wasActionPressed('arrowToggle')) toggleArrowType(); // v5: action layer
 
   // Wheel cycling (active frames only): bank deltaY until a full notch
   // accrues, then swap. The cooldown keeps a fast flick to one swap per step;

@@ -106,27 +106,38 @@ function onHudKey(e) {
   toggleHud();
 }
 
-/** Builds the overlay DOM once. Hidden by default; never steals input. */
+/**
+ * Builds the overlay DOM once. Hidden by default; never steals input.
+ * Fully failure-isolated: a partial/hostile document (headless test envs ship
+ * `document` with no createElement; some embeds have no body) must degrade to
+ * "no overlay" rather than throw out of createPerf/toggleHud - telemetry is
+ * optional by contract. Atomic assignment keeps the hudEl/hudTextEl pair
+ * consistent: either both are usable or both stay null.
+ */
 function installHud() {
   if (hudEl || typeof document === 'undefined') return;
-  hudEl = document.createElement('div');
-  hudEl.id = 'iw-perf-hud';
-  const s = hudEl.style;
-  s.position = 'fixed';
-  s.top = '8px';
-  s.left = '8px';
-  s.zIndex = '9999';
-  s.font = '11px/1.5 ui-monospace, Menlo, Consolas, monospace';
-  s.color = '#d7fbe8';
-  s.background = 'rgba(8, 14, 10, 0.72)';
-  s.padding = '6px 9px';
-  s.borderRadius = '6px';
-  s.pointerEvents = 'none';
-  s.whiteSpace = 'pre';
-  s.textShadow = '0 1px 2px rgba(0,0,0,0.8)';
-  hudTextEl = document.createElement('div');
-  hudEl.appendChild(hudTextEl);
-  (document.body || document.documentElement).appendChild(hudEl);
+  try {
+    const el = document.createElement('div');
+    el.id = 'iw-perf-hud';
+    const s = el.style;
+    s.position = 'fixed';
+    s.top = '8px';
+    s.left = '8px';
+    s.zIndex = '9999';
+    s.font = '11px/1.5 ui-monospace, Menlo, Consolas, monospace';
+    s.color = '#d7fbe8';
+    s.background = 'rgba(8, 14, 10, 0.72)';
+    s.padding = '6px 9px';
+    s.borderRadius = '6px';
+    s.pointerEvents = 'none';
+    s.whiteSpace = 'pre';
+    s.textShadow = '0 1px 2px rgba(0,0,0,0.8)';
+    const textEl = document.createElement('div');
+    el.appendChild(textEl);
+    (document.body || document.documentElement).appendChild(el);
+    hudEl = el;
+    hudTextEl = textEl;
+  } catch (_) { /* no real DOM available: only the overlay is lost */ }
 }
 
 function fmtTris(n) {

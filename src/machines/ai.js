@@ -16,6 +16,7 @@ import { Input } from '../core/input.js';
 import { clamp, lerp, damp, makeRng, randRange } from '../core/utils.js';
 import { heightAt } from '../world/terrain.js';
 import { sfx } from '../audio/audio.js';
+import { attachMachineAnimator } from '../anim/machineAnim.js'; // wave E lifecycle wiring
 import {
   createMachine, applyAlphaVariant, updateDeflectFX,
   showHarvestRing, hideHarvestRing, CARCASS_LIFE,
@@ -1860,7 +1861,7 @@ function updateHarvest(dt) {
     emitPrompt(want); // defer to a fresher external prompt, else show ours
   }
 
-  if (target && Input.down('KeyE')) {
+  if (target && Input.isAction('interact')) { // v5: harvest-hold via action layer
     harvHold += dt;
     _bv.set(target.group.position.x, target.group.position.y + 1.7, target.group.position.z);
     showHarvestRing(_bv, harvHold / HARVEST_TIME);
@@ -2095,6 +2096,16 @@ const HARDENED_HP_MUL = 1.2;
 /** Shared tail of spawnMachine + respawn: placement tweak + registration. */
 function finishSpawn(m, type, x, z) {
   if (type === 'duskwing') m.group.position.y = heightAt(x, z) + DUSKWING_CRUISE;
+  // Wave E: BOTH machine-record creation points (spawnMachine above and
+  // processRespawns) funnel through this tail, so attaching here gives every
+  // new record exactly one animator - the idempotency guard inside
+  // attachMachineAnimator is backup, not the primary invariant. Attach failure
+  // must never block a spawn (subsystems never crash boot).
+  try {
+    attachMachineAnimator(m);
+  } catch (err) {
+    console.error('[ai] animator attach failed:', err);
+  }
   if (G.settings.difficulty === 'hardened') {
     m.damageMul = (m.damageMul || 1) * HARDENED_DMG_MUL;
     m.maxHp = Math.round(m.maxHp * HARDENED_HP_MUL);
@@ -2262,6 +2273,20 @@ export function updateMachines(dt) {
       if (m.type === 'monarch' && distToPlayer(m) <= BOSS_NEAR_DIST) bossNear = true;
     }
     m.update(dt); // anim while alive, tip-over/fade/dispose while dead
+    // Wave E: disposeMachine (machines.js) just dropped the record from the
+    // roster + scene without knowing animators exist. Finalize ours here so an
+    // authored mixer/root can never outlive its machine across kill -> respawn
+    // cycles, and clear the slot so a reused record would get a FRESH animator
+    // rather than silently resurrecting the disposed one. Procedural-mode
+    // dispose only nulls refs; either way this runs at most once per record.
+    if (m._disposed && m.animator) {
+      try {
+        m.animator.dispose();
+      } catch (err) {
+        console.error('[ai] animator dispose failed:', err);
+      }
+      m.animator = null;
+    }
   }
   updateBolts(dt);
   updateDeflectFX(dt);

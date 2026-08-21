@@ -89,11 +89,20 @@ class InputManager {
     this._crouchLatch = false;          // toggle-mode state (crouchMode === 'toggle')
     this._aimLatch = false;             // toggle-mode state (aimMode === 'toggle')
 
-    // Defensive defaults for the hold/toggle modes owned by this module
-    // (ui/settings.js merges the same keys - both are idempotent).
+    // Defensive defaults for the hold/toggle modes owned by this module.
+    // ui/settings.js only fills keys that are still undefined
+    // (applyA11yDefaults), so whoever evaluates first owns the fresh-boot
+    // default - and that is always this constructor (ES static imports finish
+    // before main() calls loadSettings, which then lets an explicit user
+    // choice from the save win over these fallbacks).
     if (!G.settings) G.settings = {};
     if (G.settings.aimMode !== 'toggle') G.settings.aimMode = 'hold';
-    if (G.settings.crouchMode !== 'toggle') G.settings.crouchMode = 'hold';
+    // Crouch defaults to 'toggle': pre-wave-J player.js flipped a persistent
+    // KeyC toggle on every press, and the 3C migration (player.js now consumes
+    // isAction('crouch') as a LEVEL with this latch as the single owner) must
+    // keep default keyboard behaviour identical. 'hold' remains available as
+    // an explicit user setting.
+    if (G.settings.crouchMode !== 'hold') G.settings.crouchMode = 'toggle';
 
     window.addEventListener('keydown', (e) => {
       if (e.repeat) return;
@@ -149,6 +158,40 @@ class InputManager {
 
   /** True only on the frame the key went down (consumed at endFrame). */
   pressed(code) { return this.pressedSet.has(code); }
+
+  // v5 fix: these five members are the pre-wave-J public API consumed by
+  // camera.js (consumeMouse, lockPointer, unlockPointer, onLockChange) and
+  // bow.js (consumeWheel). The action-layer rewrite dropped the methods while
+  // keeping every listener/field they rely on, which crashed the frame loop
+  // on first update. Restored verbatim from the original implementation.
+
+  /** Read and clear accumulated mouse movement. Returns {dx, dy}. */
+  consumeMouse() {
+    const out = { dx: this.mouseDX, dy: this.mouseDY };
+    this.mouseDX = 0; this.mouseDY = 0;
+    return out;
+  }
+
+  /** Read and clear accumulated wheel motion. Returns deltaY. */
+  consumeWheel() {
+    const d = this.wheelDelta;
+    this.wheelDelta = 0;
+    return d;
+  }
+
+  lockPointer(element) {
+    this._element = element;
+    if (document.pointerLockElement !== element) {
+      element.requestPointerLock?.();
+    }
+  }
+
+  unlockPointer() {
+    if (document.pointerLockElement) document.exitPointerLock?.();
+  }
+
+  onLockChange(fn) { this._onLockChange = fn; }
+
 
   // ------------------------------------------------------------- actions --
 

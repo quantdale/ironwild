@@ -99,7 +99,10 @@ function findActionKey(graph, type, attackName) {
  * window.__IW_ASSETS.instantiate(). Idempotent per machine.
  */
 export function attachMachineAnimator(machine, opts = {}) {
-  if (!machine || machine.animator) return machine.animator;
+  // Idempotent per LIVE machine; a disposed animator is finalized state - hand
+  // out a fresh one instead of resurrecting a dead timeline (respawn-reuse
+  // safety: callers that forgot to clear m.animator still get a clean attach).
+  if (!machine || (machine.animator && !machine.animator._disposed)) return machine.animator;
 
   const animator = {
     mode: 'procedural',      // flipped to 'authored' only if/when assets resolve
@@ -110,6 +113,7 @@ export function attachMachineAnimator(machine, opts = {}) {
     _locoSpeed: null,        // explicit playLocomotion request (null = passthrough)
     _eventCtl: null,         // timeline controller of the live authored attack
     _lastAction: null,       // live attack action (for attackProgress())
+    _disposed: false,        // set by dispose(); tickers must skip finalized animators
 
     /**
      * Report desired locomotion speed. Procedural path: metadata only - ai.js
@@ -192,6 +196,10 @@ export function attachMachineAnimator(machine, opts = {}) {
 
     /** Release authored resources (integrator may call alongside dispose()). */
     dispose() {
+      // Mark finalized FIRST: updateMachineAnimators consults this flag, so a
+      // disposed animator can never be ticked again even if a stale reference
+      // lingers in some machine record.
+      animator._disposed = true;
       if (animator.graph) {
         animator.graph.dispose();
         if (animator.root) animator.root.removeFromParent();
@@ -227,6 +235,7 @@ export function attachMachineAnimator(machine, opts = {}) {
 
 /** Tick one animator: advance its graph, then drain its timeline events. */
 function updateAnimator(animator, dt) {
+  if (animator._disposed) return; // finalized animators are inert by contract
   if (animator.mode !== 'authored' || !animator.graph || !(dt > 0)) return;
   // Locomotion speed source: explicit playLocomotion() request wins; otherwise
   // pass machine.moveSpeed through (ai.js writes it every frame). Machines are
@@ -247,9 +256,12 @@ function updateAnimator(animator, dt) {
  */
 export function updateMachineAnimators(dt) {
   const machines = G.machines;
+  if (!machines) return; // defensive: boot orders may tick this before populate
   for (let i = 0; i < machines.length; i++) {
     const m = machines[i];
-    if (!m || m._disposed || !m.animator) continue;
+    // _disposed machine records are leaving (or have left) the roster; a
+    // disposed animator is finalized and must never be advanced again.
+    if (!m || m._disposed || !m.animator || m.animator._disposed) continue;
     try {
       updateAnimator(m.animator, dt);
     } catch (err) {

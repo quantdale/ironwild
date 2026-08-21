@@ -242,8 +242,11 @@ export function createPlayer() {
 
   /** Camera-relative WASD intent into `out` (normalized, or zero vector). */
   function computeWish(out) {
-    const f = (Input.down('KeyW') ? 1 : 0) - (Input.down('KeyS') ? 1 : 0);
-    const s = (Input.down('KeyD') ? 1 : 0) - (Input.down('KeyA') ? 1 : 0);
+    // 3C: action-layer reads - rebinding and the gamepad stick merge now drive
+    // movement. Level semantics match the retired raw polls one-to-one under
+    // default bindings (KeyW/S/D/A).
+    const f = (Input.isAction('forward') ? 1 : 0) - (Input.isAction('back') ? 1 : 0);
+    const s = (Input.isAction('right') ? 1 : 0) - (Input.isAction('left') ? 1 : 0);
     if (f === 0 && s === 0) return out.set(0, 0, 0);
     const yaw = G.cam.yaw;
     const fx = -Math.sin(yaw), fz = -Math.cos(yaw); // forward = -Z rotated by yaw
@@ -285,8 +288,8 @@ export function createPlayer() {
     if (player.hp > player.maxHp) player.hp = player.maxHp;
     player.aiming = G.cam.aiming;
 
-    // --- medicine (KeyH) ---
-    if (!player.dead && Input.pressed('KeyH') &&
+    // --- medicine (rising edge via action layer so rebinds apply; KeyH) ---
+    if (!player.dead && Input.wasActionPressed('heal') &&
         G.inventory.medicine > 0 && player.hp < player.maxHp) {
       G.inventory.medicine -= 1;
       heal(MEDICINE_HEAL);
@@ -297,10 +300,19 @@ export function createPlayer() {
     const v = player.vel;
     const inWater = p.y < CONFIG.waterLevel;
 
-    // --- crouch toggle (KeyC); dodge is ControlLeft ONLY since v2 ---
-    if (!player.dead && Input.pressed('KeyC')) {
-      player.crouched = !player.crouched;
-      bus.emit('ui', { action: 'click' });
+    // --- crouch (default binding KeyC; dodge moved to ControlLeft only in v2).
+    // 3C single-owner rule: input.js's action latch flips once per press while
+    // crouchMode === 'toggle' (the fresh-boot default, matching this system's
+    // legacy press-once-stays-crouched feel); with 'hold' the level tracks the
+    // key directly. The player consumes a LEVEL here either way - no second
+    // toggle lives anywhere, so rebinding C or using pad Y cannot double-flip,
+    // and dead players keep their last pose exactly like the old !dead gate.
+    if (!player.dead) {
+      const crouched = Input.isAction('crouch');
+      if (crouched !== player.crouched) {
+        player.crouched = crouched;
+        bus.emit('ui', { action: 'click' }); // same feedback the old toggle gave
+      }
     }
 
     // --- swim mode: hysteresis around the surface so it never flickers ---
@@ -314,9 +326,11 @@ export function createPlayer() {
       bus.emit('noise', { pos: p, radius: 10 }); // splash
     }
 
-    // --- dodge trigger (ControlLeft only; not while swimming) ---
+    // --- dodge trigger (rising edge via the action layer - default
+    // ControlLeft, pad B merges in; still never while swimming). Edge-per-
+    // frame equals the old pressed() poll for any humanly reachable tap. ---
     if (!player.dead && !player.dodging && !player.swimming &&
-        Input.pressed('ControlLeft')) {
+        Input.wasActionPressed('dodge')) {
       const cost = CONFIG.dodgeCost * (G.skills.secondWind ? 0.5 : 1);
       if (player.stamina >= cost) {
         player.stamina -= cost;
@@ -347,8 +361,9 @@ export function createPlayer() {
     const wantMove = _wish.lengthSq() > 1e-6;
 
     player.sprinting = false;
+    // 3C: level read via the action layer (default ShiftLeft; pad RB merges).
     if (!player.dead && !player.dodging && !player.crouched && wantMove &&
-        Input.down('ShiftLeft') && player.stamina > 0 && !inWater) {
+        Input.isAction('sprint') && player.stamina > 0 && !inWater) {
       player.sprinting = true;
       player.stamina -= CONFIG.sprintCost * dt;
       staminaIdle = 0;
@@ -406,13 +421,17 @@ export function createPlayer() {
       // Space swims up; the rise carries through the swim-exit threshold so
       // momentum breaches into a small hop out of the water. Otherwise drift
       // down gently.
-      const vyTarget = (!player.dead && Input.down('Space'))
+      // 3C: swim-up rides the jump action held down (default Space / pad A) -
+      // level semantics identical to the old Input.down('Space') poll.
+      const vyTarget = (!player.dead && Input.isAction('jump'))
         ? SWIM_RISE_SPEED
         : SWIM_SINK_SPEED;
       v.y = damp(v.y, vyTarget, 4, dt);
     } else {
+      // 3C: jump keeps its one-shot feel as an action-layer rising edge
+      // (default Space / pad A) instead of a raw pressed() poll.
       if (!player.dead && !player.dodging && !inWater &&
-          Input.pressed('Space') && player.grounded) {
+          Input.wasActionPressed('jump') && player.grounded) {
         v.y = CONFIG.playerJumpVel;
         player.grounded = false;
       }

@@ -37,7 +37,7 @@ const A11Y_DEFAULTS = {
   highContrastCues: false,
   aimAssist: 0,          // 0..1 magnetism strength (consumers read >=0.01)
   aimMode: 'hold',       // 'hold' | 'toggle' - action layer in core/input.js
-  crouchMode: 'hold',    // 'hold' | 'toggle'
+  crouchMode: 'toggle',  // 'hold' | 'toggle' (legacy KeyC feel is a toggle; input.js owns the latch)
 };
 const MODES = ['hold', 'toggle'];
 

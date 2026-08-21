@@ -98,8 +98,9 @@ export function activeWindowProgress(action) {
  *   'act_spear_thrust' -> { kind:'act', family:'spear', move:'thrust' }
  *   'loc_walk'         -> { kind:'loc',  family:'walk', move:null }
  *   'react_hit_light'  -> { kind:'react',family:'hit',  move:'light' }
- * Unknown prefixes yield kind:null (family keeps the head token) so callers
- * can still bucket custom names without throwing.
+ * Unknown prefixes yield kind:null (the unknown head token is consumed;
+ * family receives the NEXT token) so callers can still bucket custom names
+ * without throwing.
  */
 export function parseClipName(raw) {
   const parts = String(raw || '').split('_');
