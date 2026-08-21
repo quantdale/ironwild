@@ -5,6 +5,9 @@
 // kill streaks and focus-scan detection.
 // v3: mirefang lake ambusher + monarch world-boss scripts, G.bossNear,
 // timed anchor respawns and bramblehorn herd stampedes.
+// v5: perception/blackboard strangler layer (see perception.js) feeds the
+// FSMs instead of replacing them - awareness-gated aggro, seek tier, local
+// steering + stuck recovery, far-machine LOD ticking, per-machine debug.
 
 import * as THREE from 'three';
 import { bus } from '../core/events.js';
@@ -17,11 +20,12 @@ import {
   createMachine, applyAlphaVariant, updateDeflectFX,
   showHarvestRing, hideHarvestRing, CARCASS_LIFE,
 } from './machines.js';
+import { createPerception, AWARE_AGGRO } from './perception.js';
 
 // ----------------------------------------------------------------- tuning --
 
-const SIGHT_RANGE = 45;
-const SIGHT_COS = Math.cos((140 * Math.PI) / 360); // 140 deg FOV cone
+// v5: the flat 45u sight range + cone moved to perception.js's per-type
+// VISION table (tighter ranges are the point of the layer).
 const WAKE_DIST = 18;      // dormant machines wake when the player is this close
 const LEAVE_DIST = 70;     // aggro drops when the player gets this far away
 const WALK_SPEED = 2.2;    // patrol speed
@@ -95,10 +99,79 @@ const BOSS_NEAR_DIST = 80;       // G.bossNear radius
 const RESPAWN_AFTER = 90;        // dead non-alpha machines, seconds
 const RESPAWN_AFTER_ALPHA = 240; // alpha variants take longer
 
+// v5: local steering / stuck recovery (applyLocalSteering below)
+const STEER_SEP_DIST = 4;        // separation radius between alive machines
+const STEER_BORDER_BAND = 10;    // soft inward push begins this far inside the hard border
+const STUCK_WINDOW = 1.5;        // seconds between displacement audits
+const STUCK_MIN_MOVE = 0.3;      // less XZ travel than this counts as wedged
+const STUCK_REANCHOR_T = 4;      // seconds of homeward pull after repeated wedges
+
+// v5: far-machine LOD (>90u): behavior logic at <=10Hz on accumulated dt
+const LOD_INTERVAL = 0.1;
+const LOD_DIST = 90;
+
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _v3 = new THREE.Vector3();
 const _bv = new THREE.Vector3();
+
+// -------------------------------------------------- v5: perception layer ---
+// One blackboard instance serves the roster. Created lazily so both boot
+// orders (populateWorld first OR updateMachines first) work; module-level
+// null until then lets the machineDied hook no-op pre-boot.
+
+let perception = null;
+
+function ensurePerception() {
+  if (!perception) perception = createPerception();
+  return perception;
+}
+
+// drop stale blackboard data when a machine dies (respawns build fresh ones)
+bus.on('machineDied', ({ machine }) => {
+  if (perception) perception.forgetMachine(machine);
+});
+
+/** Full-awareness read replacing the old per-frame canSeePlayer -> enterAttack
+ *  trigger: awareness >= AWARE_AGGRO means exactly what "saw the player" used
+ *  to, just reached over a few think ticks instead of instantly. */
+function perceptionSighted(m) {
+  if (!perception) return false;
+  return perception.getBlackboard(m).awareness >= AWARE_AGGRO;
+}
+
+/** Consume-and-clear seek hint (edge-triggered by perception.js). Null when
+ *  nothing new - callers redirect patrol/suspicious toward the returned point. */
+function takeSeekHint(m) {
+  return perception ? perception.takeSeekHint(m) : null;
+}
+
+// ------------------------------------------------------- v5: debug mirror --
+// m.debug is dev/HUD-facing only: allocated on transitions, field-mutated per
+// tick so steady-state costs zero garbage. peekBlackboard avoids creating
+// boards for vantage/dormant machines just to display zeros.
+
+function noteDebug(m, reason) {
+  const bb = perception ? perception.peekBlackboard(m) : null;
+  m.debug = {
+    state: m._ai ? m._ai.state : '-',
+    targetDist: Math.round(distToPlayer(m)),
+    awareness: bb ? Math.round(bb.awareness * 100) / 100 : 0,
+    lastTransition: G.elapsed,
+    reason,
+    stuckCount: m._ai && m._ai._steer ? m._ai._steer.wedgeStreak : 0,
+  };
+}
+
+function refreshDebug(m) {
+  const d = m.debug;
+  if (!d) return;
+  const bb = perception ? perception.peekBlackboard(m) : null;
+  d.state = m._ai ? m._ai.state : '-';
+  d.targetDist = Math.round(distToPlayer(m));
+  d.awareness = bb ? Math.round(bb.awareness * 100) / 100 : 0;
+  d.stuckCount = m._ai && m._ai._steer ? m._ai._steer.wedgeStreak : 0;
+}
 
 // ------------------------------------------------------------- AI state ----
 
@@ -263,6 +336,7 @@ function retreat(m, speed, dt) {
 
 /** Advance with water/border avoidance: probe ahead, detour sideways if blocked. */
 function advanceAvoid(m, speed, dt) {
+  applyLocalSteering(m, dt); // v5: slope/separation/border deflect before the probe
   const yaw = m.group.rotation.y;
   const px = m.group.position.x + Math.sin(yaw) * 2.5;
   const pz = m.group.position.z + Math.cos(yaw) * 2.5;
@@ -282,6 +356,7 @@ function advanceAvoid(m, speed, dt) {
 
 /** v3: swim/crawl movement that ignores water (mirefang); still border-clamped. */
 function advanceWater(m, speed, dt) {
+  applyLocalSteering(m, dt, true); // v5: watchdog only - submerged pathing unchanged
   const yaw = m.group.rotation.y;
   let nx = m.group.position.x + Math.sin(yaw) * speed * dt;
   let nz = m.group.position.z + Math.cos(yaw) * speed * dt;
@@ -329,11 +404,145 @@ function moveGround(m) {
 function duskwingFlightHeight(m, dt) {
   const gy = heightAt(m.group.position.x, m.group.position.z);
   if (m._ai.atk !== 'dive') { // dives manage their own descent
-    m.group.position.y = damp(m.group.position.y, gy + DUSKWING_CRUISE, 1.6, dt);
+    // v5: clearance probe - rising ground ~4u ahead lifts the cruise band
+    // early so ridge lines don't clip the wingtips before the damp catches up
+    let band = DUSKWING_CRUISE;
+    const yaw = m.group.rotation.y;
+    const ah = heightAt(
+      m.group.position.x + Math.sin(yaw) * 4,
+      m.group.position.z + Math.cos(yaw) * 4,
+    );
+    if (ah - gy > 1.5) band += ah - gy;
+    m.group.position.y = damp(m.group.position.y, gy + band, 1.6, dt);
   }
 }
 
+// ------------------------------------------------- v5: local steering ------
+// Corrective micro-layer under the archetype FSMs: nudges headings around
+// slopes, crowding and the world border, plus a stuck watchdog with detour /
+// homeward-recovery. Purely advisory - each FSM keeps heading authority via
+// its own turnToward next frame. Ground movers reach this through
+// advanceAvoid; water movers get watchdog-only through advanceWater.
+
+/**
+ * Deflect `m`'s heading in place. waterMode skips slope/separation/border
+ * (submerged pathing stays exactly as shipped) but keeps stuck recovery.
+ */
+function applyLocalSteering(m, dt, waterMode = false) {
+  const ai = m._ai;
+  const s = ai._steer || (ai._steer = {
+    ax: m.group.position.x,
+    az: m.group.position.z,
+    auditT: STUCK_WINDOW,
+    detourT: 0,
+    detourYaw: 0,
+    wedgeStreak: 0, // consecutive wedges -> re-anchor pull toward homeX/homeZ
+    reanchorT: 0,
+  });
+
+  // -- stuck watchdog: audit displacement every STUCK_WINDOW while trying to move
+  s.auditT -= dt;
+  if (Math.abs(m.moveSpeed) > 0.5) { // movement intent without progress = wedged
+    if (s.auditT <= 0) {
+      const moved = Math.hypot(m.group.position.x - s.ax, m.group.position.z - s.az);
+      s.auditT = STUCK_WINDOW;
+      s.ax = m.group.position.x;
+      s.az = m.group.position.z;
+      if (moved < STUCK_MIN_MOVE) {
+        s.wedgeStreak++;
+        if (s.wedgeStreak >= 3) {
+          // teleport-free re-anchor: strong homeward heading for a few seconds
+          // (homeX/homeZ is the spawn roost - lair/lair for mirefang too)
+          s.wedgeStreak = 0;
+          s.reanchorT = STUCK_REANCHOR_T;
+        } else {
+          s.detourT = 1; // brief angled shove out of the wedge
+          const side = ai.rng() < 0.5 ? -1 : 1;
+          s.detourYaw = side * ((60 + ai.rng() * 60) * Math.PI) / 180; // +-60..120 deg
+        }
+      } else {
+        s.wedgeStreak = 0;
+      }
+    }
+  } else {
+    // idle time must not bank as progress: keep the window armed and anchored here
+    s.auditT = STUCK_WINDOW;
+    s.ax = m.group.position.x;
+    s.az = m.group.position.z;
+  }
+
+  if (s.reanchorT > 0) {
+    s.reanchorT -= dt;
+    turnToward(m, ai.homeX, ai.homeZ, 2.5, dt); // walk home instead of shoving
+    return;
+  }
+  if (s.detourT > 0) {
+    s.detourT -= dt;
+    m.group.rotation.y += s.detourYaw * dt; // hold the detour bearing
+    return;
+  }
+  if (waterMode) return; // submerged pathing unchanged beyond recovery
+
+  // -- terrain slope probe: refuse to march up/down >45 degree faces ----------
+  const px = m.group.position.x;
+  const pz = m.group.position.z;
+  const yaw = m.group.rotation.y;
+  const fx = Math.sin(yaw);
+  const fz = Math.cos(yaw);
+  const hHere = heightAt(px, pz);
+  const hAhead = heightAt(px + fx * 2, pz + fz * 2);
+  if (Math.atan2(Math.abs(hAhead - hHere), 2) > Math.PI / 4) {
+    // take whichever flank is gentler, then rotate the heading off the face
+    const leftD = Math.abs(heightAt(px - fz * 2, pz + fx * 2) - hHere);
+    const rightD = Math.abs(heightAt(px + fz * 2, pz - fx * 2) - hHere);
+    const side = leftD <= rightD ? 1 : -1;
+    m.group.rotation.y = yaw + side * ((40 * Math.PI) / 180);
+    return; // one correction per frame; the next frame re-probes
+  }
+
+  // -- separation: slide off crowded neighbours --------------------------------
+  let sx = 0;
+  let sz = 0;
+  let crowded = false;
+  for (const o of G.machines) {
+    if (o === m || !o.alive) continue;
+    const dx = px - o.group.position.x;
+    const dz = pz - o.group.position.z;
+    const d2 = dx * dx + dz * dz;
+    if (d2 > STEER_SEP_DIST * STEER_SEP_DIST || d2 < 1e-6) continue;
+    const d = Math.sqrt(d2);
+    sx += (dx / d) * (STEER_SEP_DIST - d);
+    sz += (dz / d) * (STEER_SEP_DIST - d);
+    crowded = true;
+  }
+
+  // -- soft border push: ramps up over the innermost 10u of the play radius ----
+  let bx = 0;
+  let bz = 0;
+  const rr = Math.hypot(px, pz);
+  const borderR = CONFIG.playRadius - STEER_BORDER_BAND;
+  if (rr > borderR) {
+    const k = Math.min(1, (rr - borderR) / STEER_BORDER_BAND);
+    bx = (-px / rr) * k * 2;
+    bz = (-pz / rr) * k * 2;
+  }
+
+  if (!crowded && bx === 0 && bz === 0) return;
+  // blend corrections into the desired heading, rate-limited so pursuits still converge
+  const cx = fx + sx * 0.35 + bx * 0.3;
+  const cz = fz + sz * 0.35 + bz * 0.3;
+  const cl = Math.hypot(cx, cz);
+  if (cl < 1e-4) return;
+  const want = Math.atan2(cx / cl, cz / cl);
+  let d = want - m.group.rotation.y;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  m.group.rotation.y += clamp(d, -3 * dt, 3 * dt);
+}
+
 // ------------------------------------------------------------- perception --
+// v5: per-frame sight raycasting moved to perception.js (staggered thinks,
+// budgeted terrain LOS, awareness ramp). ai.js only reads blackboards now.
 
 function distToPlayer(m) {
   const p = G.player.pos;
@@ -346,20 +555,6 @@ function distXZto(m, v) {
   const dx = v.x - m.group.position.x;
   const dz = v.z - m.group.position.z;
   return Math.sqrt(dx * dx + dz * dz);
-}
-
-function canSeePlayer(m, dist) {
-  const p = G.player;
-  if (!p || p.dead || dist > SIGHT_RANGE) return false;
-  // v2: crouched-concealed players are spotted at 35% range unless already aggro
-  let range = SIGHT_RANGE;
-  if (p.concealed && !m.aggro) range *= 0.35;
-  if (dist > range) return false;
-  if (dist < 6) return true; // close-range sense ignores the FOV cone
-  const yaw = m.group.rotation.y;
-  const dx = (p.pos.x - m.group.position.x) / dist;
-  const dz = (p.pos.z - m.group.position.z) / dist;
-  return Math.sin(yaw) * dx + Math.cos(yaw) * dz > SIGHT_COS;
 }
 
 /** True when the named weak point has been shattered. */
@@ -385,6 +580,7 @@ function enterSuspicious(m, pos) {
   ai.stateT = 0;
   ai.atk = null;
   ai.target.copy(pos);
+  noteDebug(m, 'investigating'); // v5
 }
 
 function enterAttack(m) {
@@ -394,6 +590,7 @@ function enterAttack(m) {
   ai.stateT = 0;
   ai.atk = null;
   m.aggro = true;
+  noteDebug(m, 'aggro'); // v5
   // one-shot alert cue for audio/FX consumers - the re-entry guard above keeps
   // this to exactly one emit per calm->aggravated transition
   bus.emit('machineAlert', { pos: m.group.position.clone() });
@@ -412,6 +609,7 @@ function enterPatrol(m) {
   ai.atk = null;
   ai.waitT = 0;
   m.aggro = false;
+  noteDebug(m, 'calmed'); // v5
   // a sub-state cut short by target loss leaves its pose channels driven and
   // nothing decays them - clear them or the machine freezes in that pose
   const a = m._anim;
@@ -441,6 +639,7 @@ function stampedeHerd(src) {
     m._ai.stateT = 0;
     m._ai.atk = null;
     m.aggro = true;
+    noteDebug(m, 'herd-flee'); // v5
   }
 }
 
@@ -449,6 +648,7 @@ function stampedeHerd(src) {
 function tickMachine(m, dt) {
   const ai = m._ai;
   if (!ai) return;
+  refreshDebug(m); // v5: cheap in-place mirror refresh (allocs only on transitions)
   const p = G.player;
   m.moveSpeed = 0;
   ai.stateT += dt;
@@ -528,6 +728,8 @@ function tickMachine(m, dt) {
   switch (ai.state) {
     case 'dormant':
       if (m.type === 'duskwing' && !ai.grounded) duskwingDrift(m, dt); // idle hover-circle
+      // instant-reaction path: proximity wake bypasses perception by design
+      // (sleepers have no think loop; awareness stays 0 until they wake)
       if (!p.dead && dist < WAKE_DIST) enterSuspicious(m, p.pos);
       break;
     case 'patrol':
@@ -550,9 +752,18 @@ function tickMachine(m, dt) {
 
 function patrolTick(m, dt, dist) {
   const ai = m._ai;
-  if (m.type !== 'bramblehorn' && canSeePlayer(m, dist)) {
-    enterAttack(m);
-    return;
+  // v5: blackboard-gated escalation. Bramblehorn keeps its legacy
+  // never-initiates exemption for both the aggro read and seek hints.
+  if (m.type !== 'bramblehorn') {
+    if (perceptionSighted(m)) {
+      enterAttack(m);
+      return;
+    }
+    const seek = takeSeekHint(m); // partial awareness: investigate instead of waiting
+    if (seek) {
+      enterSuspicious(m, seek);
+      return;
+    }
   }
   if (m.type === 'duskwing' && !ai.grounded) {
     duskwingDrift(m, dt); // aerial circles instead of ground waypoints
@@ -586,10 +797,13 @@ function patrolTick(m, dt, dist) {
 
 function suspiciousTick(m, dt, dist) {
   const ai = m._ai;
-  if (m.type !== 'bramblehorn' && canSeePlayer(m, dist)) {
+  // v5: blackboard-gated escalation (same exemption as patrolTick).
+  if (m.type !== 'bramblehorn' && perceptionSighted(m)) {
     enterAttack(m);
     return;
   }
+  const seek = takeSeekHint(m);
+  if (seek) ai.target.copy(seek); // fresher clue mid-investigation: retarget the approach
   if (m.type === 'duskwing' && !ai.grounded) {
     ai.circleAng += dt * 0.7; // circle above the investigation point
     hoverToward(
@@ -1163,6 +1377,7 @@ function startMireAmbush(m) {
   ai.leapEnd.set(G.player.pos.x, 0, G.player.pos.z);
   m.aggro = true;
   m.jawTarget = 0.95;
+  noteDebug(m, 'ambush'); // v5
   sfx('screech', { pos: m.group.position }); // hiss before the strike
   bus.emit('noise', { pos: m.group.position.clone(), radius: 24 }); // surface splash
 }
@@ -1413,6 +1628,7 @@ function monarchTick(m, dt) {
   if (step > ai.enrageStep && m.hp > 0) {
     ai.enrageStep = step;
     ai.roarT = 1.1;
+    noteDebug(m, 'enrage'); // v5
     bus.emit('noise', { pos: m.group.position.clone(), radius: 60 });
     bus.emit('notify', { text: 'THE MONARCH ENRAGES', tone: 'bad' });
     sfx('growl', { pos: m.group.position });
@@ -1469,6 +1685,7 @@ function monarchTick(m, dt) {
     ai.atk = 'stomp';
     ai.phaseT = 0;
     ai.dashHit = false;
+    noteDebug(m, 'stomp'); // v5
     // mark the slam spot partway toward the player
     const k = Math.min(1, (MONARCH_STOMP_RANGE - 1) / d);
     ai.target.set(
@@ -1483,6 +1700,7 @@ function monarchTick(m, dt) {
     ai.phaseT = 0;
     ai.dashHit = false;
     ai.swipeSide = ai.strafeDir;
+    noteDebug(m, 'tail'); // v5
   }
 }
 
@@ -1894,6 +2112,7 @@ function finishSpawn(m, type, x, z) {
  * of the origin.
  */
 export function populateWorld() {
+  ensurePerception(); // v5: blackboards ready before the first machine thinks
   const rng = makeRng((CONFIG.seed ^ 0x51ab3e) >>> 0);
   const plan = [
     ['skitter', 3],
@@ -2004,9 +2223,22 @@ function findSpot(rng, placed, type) {
 
 // ---------------------------------------------------------- frame update ---
 
+/**
+ * v5: far machines (>90u) run their behavior FSM at <=10Hz on accumulated dt
+ * while movement integrates in the same big step, so trajectories match
+ * full-rate sim; moveSpeed stays warm between ticks so gaits don't stutter.
+ * The Monarch is exempt (horizon spectacle + boss music need smooth motion)
+ * and attack-state machines are naturally excluded - they break off at 70u.
+ */
+function lodFar(m) {
+  if (m.type === 'monarch') return false;
+  return distToPlayer(m) > LOD_DIST;
+}
+
 /** Called by main.js every frame with already-timeScaled dt. */
 export function updateMachines(dt) {
   if (!G.player) return;
+  ensurePerception().update(dt); // v5: blackboards think before FSMs read them
   let threatTarget = 0;
   let bossNear = false;
   for (let i = G.machines.length - 1; i >= 0; i--) {
@@ -2014,6 +2246,14 @@ export function updateMachines(dt) {
     if (m.alive) {
       if (m.staggerTimer > 0 || !m._ai) {
         m.moveSpeed = 0; // staggered: no movement, no attacks
+      } else if (lodFar(m)) {
+        // v5 LOD: logic quantum accumulates, then ticks in one batch
+        const ai = m._ai;
+        ai._lodAcc = (ai._lodAcc || 0) + dt;
+        if (ai._lodAcc >= LOD_INTERVAL) {
+          tickMachine(m, ai._lodAcc);
+          ai._lodAcc = 0;
+        }
       } else {
         tickMachine(m, dt);
       }
