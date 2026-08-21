@@ -9,7 +9,7 @@ new files are listed with their single owner.
 - `G.settings` `{ master, music, sfx, sens, invertY, quality }` — persisted by ui/settings.js
   to localStorage key `ironwild-settings`; applied live on `'settingsChanged'`.
 - `G.threat` 0..1 — written every frame by machines/ai.js (any aggro machine within 40u → →1).
-- `G.weather` `{ type:'clear'|'rain'|'storm', intensity:0..1, wind:0..1 }` — written by world/weather.js.
+- `G.weather` `{ type:'clear'|'rain'|'storm', intensity:0..1, wind:0..1, gust:0..1 }` — written by world/weather.js (gust = layered value-noise gust strength).
 - `G.mapRevealed` — set true once a Vantage is focus-scanned; minimap fog lifts.
 - `G.quests` `{ slots:[null,null,null], completed }` — owned by systems/quests.js.
 - `G.inventory.fireArrows` / `maxFireArrows`; `G.arrowType` `'standard'|'fire'` (KeyX toggle).

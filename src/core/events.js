@@ -37,6 +37,7 @@ export const bus = {
 //   'machineHit'   { machine, point:Vector3, damage:number, weak:boolean, partName:string|null }
 //   'partBroken'   { machine, partName:string }
 //   'machineDied'  { machine, pos:Vector3 }
+//   'machineAlert' { pos:Vector3 }                       - machine escalated to attack (audio bark)
 //   'playerHit'    { amount:number, hp:number, pos:Vec3|null }
 //   'playerHealed' { hp:number }
 //   'playerDied'   {}
@@ -53,7 +54,7 @@ export const bus = {
 //   'settingsChanged'{ key:string, value:* }            - ui/settings.js after any change
 //   'questUpdate'    { quest }                          - systems/quests.js progress/completion
 //   'gameSaved'      { manual:boolean }                 - systems/save.js
-//   'killStreak'     { count:number }                   - machines/ai.js on rapid kills (HUD banner)
+//   'killStreak'     { count:number }                   - machines/ai.js on rapid kills (HUD banner + audio sting + XP streak bonus)
 // v3 additions:
 //   'xpGain'         { amount:number, reason:string }    - systems/xp.js after any XP source
 //   'levelUp'        { level:number }                    - systems/xp.js on level threshold

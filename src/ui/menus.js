@@ -59,6 +59,7 @@ export function createMenus() {
   els.gearStart.addEventListener('click', openSettings);
   els.gearPause.addEventListener('click', openSettings);
   if (els.continueBtn) els.continueBtn.addEventListener('click', continueGame);
+  if (els.newRunBtn) els.newRunBtn.addEventListener('click', newRun);
   for (const def of SKILLS) {
     els.skillCards[def.id].addEventListener('click', () => buySkill(def));
   }
@@ -146,6 +147,18 @@ function continueGame(e) {
     console.error('[menus] save.loadGame failed:', err);
   }
   beginGame();
+}
+
+/** New Run button: confirm, wipe the save slot, reload into a fresh boot. */
+function newRun(e) {
+  e.stopPropagation(); // the start screen's click-anywhere-to-begin must not fire
+  if (!confirm('Delete saved run and start fresh?')) return;
+  try {
+    if (typeof save.clearSave === 'function') save.clearSave();
+  } catch (err) {
+    console.error('[menus] save.clearSave failed:', err);
+  }
+  location.reload();
 }
 
 function onLockChange(locked) {
@@ -392,11 +405,13 @@ function buildDom() {
         `<div class="iw-ck">${k}</div><div class="iw-ca">${a}</div>`).join('')}
       </div>
       ${canContinue ? '<button class="iw-btn" id="iw-continue">CONTINUE</button>' : ''}
+      ${canContinue ? '<button class="iw-btn" id="iw-newrun">NEW RUN</button>' : ''}
       <div class="iw-clickbegin">CLICK TO BEGIN</div>
     </div>`;
   document.body.appendChild(start);
   els.start = start;
   els.continueBtn = start.querySelector('#iw-continue');
+  els.newRunBtn = start.querySelector('#iw-newrun');
   els.gearStart = appendGear(start);
 
   // PAUSE
@@ -583,6 +598,7 @@ function injectStyles() {
 .iw-gear:hover{background:rgba(89,227,255,.22);}
 
 #iw-continue{margin-top:6px;}
+#iw-newrun{margin-top:-6px;} /* keep the CONTINUE / NEW RUN pair visually grouped */
 
 .iw-res-grid{display:grid;grid-template-columns:repeat(6,auto);gap:10px 26px;
   margin:4px 0 8px;}

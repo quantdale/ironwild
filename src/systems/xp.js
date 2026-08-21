@@ -1,8 +1,8 @@
 // IRONWILD - XP / leveling (v3 progression row).
-// Kill / gather / scan sources feed a single progress pool owned by G.xp
-// { level, cur, next }. Fully event-driven through the bus; no DOM of its own
-// (ui/hud.js renders the bar and pulses on 'xpGain'). Level-ups grant a skill
-// point, toast 'LEVEL n' and emit 'levelUp' {level} for audio/menus.
+// Kill / gather / scan / kill-streak sources feed a single progress pool owned
+// by G.xp { level, cur, next }. Fully event-driven through the bus; no DOM of
+// its own (ui/hud.js renders the bar and pulses on 'xpGain'). Level-ups grant
+// a skill point, toast 'LEVEL n' and emit 'levelUp' {level} for audio/menus.
 
 import { bus } from '../core/events.js';
 import { G } from '../core/state.js';
@@ -21,11 +21,12 @@ const KILL_XP = {
 const ALPHA_MULT = 1.5; // machines whose name starts with 'Alpha'
 const PICKUP_XP = 5;    // any resource collected
 const SCAN_XP = 15;     // any machine focus-scanned
+const STREAK_XP = 15;   // every 3rd consecutive kill (machines/ai.js window)
 
 let inited = false;
 
 /** XP needed to clear `level` (curve from the v3 doc, rounded). */
-function nextFor(level) {
+export function nextFor(level) {
   return Math.round(100 * Math.pow(level, 1.35));
 }
 
@@ -43,6 +44,15 @@ function onPickup() {
 
 function onMachineScanned() {
   grantXp(SCAN_XP, 'scan');
+}
+
+// ai.js counts consecutive kills inside its streak window and emits
+// 'killStreak' {count} per kill from the 2nd onward; every 3rd link of the
+// chain pays a small bonus through the normal grantXp flow (HUD/level react
+// naturally). Streak reset rules stay owned by ai.js.
+function onKillStreak(e) {
+  const n = e && e.count;
+  if (Number.isFinite(n) && n > 0 && n % 3 === 0) grantXp(STREAK_XP, 'streak');
 }
 
 /**
@@ -79,6 +89,7 @@ export function createXp() {
   bus.on('machineDied', onMachineDied);
   bus.on('pickup', onPickup);
   bus.on('machineScanned', onMachineScanned);
+  bus.on('killStreak', onKillStreak);
 }
 
 /**

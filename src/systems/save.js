@@ -11,6 +11,7 @@ import { G, CONFIG } from '../core/state.js';
 import { Input } from '../core/input.js';
 import { clamp } from '../core/utils.js';
 import { isValidQuest } from './quests.js';
+import { nextFor } from './xp.js';
 
 const SAVE_KEY = 'ironwild-save';
 const SAVE_VERSION = 3; // v3->v4: added bestiary (loader tolerates the old shape)
@@ -142,7 +143,11 @@ export function loadGame() {
   if (data.xp && typeof data.xp === 'object') {
     if (Number.isFinite(data.xp.level) && data.xp.level >= 1) G.xp.level = data.xp.level;
     if (Number.isFinite(data.xp.cur) && data.xp.cur >= 0) G.xp.cur = data.xp.cur;
-    if (Number.isFinite(data.xp.next) && data.xp.next > 0) G.xp.next = data.xp.next;
+    // `next` is never trusted from the save: recompute it from the level
+    // curve so a tampered/stale threshold can't hand out instant level-ups
+    // or wedge progression. (grantXp keeps next == nextFor(level) in play,
+    // so this only ever corrects inconsistent saves.)
+    G.xp.next = nextFor(G.xp.level);
   }
   if (data.bestiary && typeof data.bestiary === 'object') {
     for (const type in data.bestiary) {

@@ -5,3 +5,5 @@ dist/
 screenshots/*
 !screenshots/ironwild-start.png
 *.log
+playwright-report/
+test-results/

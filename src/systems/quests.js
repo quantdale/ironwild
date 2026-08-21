@@ -253,24 +253,35 @@ function injectStyles() {
 
 /**
  * Shape check for records restored from a save (systems/save.js): an unknown
- * type or non-finite number would wedge the slot (a NaN refillT never
- * elapses), so invalid records are dropped and re-dealt instead.
+ * type, non-finite number, or a target the live game can never progress
+ * (hand-edited/legacy record) would wedge the slot forever, so invalid
+ * records are dropped and re-dealt instead.
  */
 export function isValidQuest(q) {
   if (!q || typeof q !== 'object' || !REWARDS[q.type]) return false;
+  // Target-per-type against live data: hunts draw from the dealable species
+  // table, gathers must name a real inventory field; scanVantage's target is
+  // fixed ('vantage'), so any record of that type is progressable.
+  if (q.type === 'hunt') {
+    if (!HUNT_TYPES.includes(q.target)) return false;
+  } else if (q.type === 'gather') {
+    if (!GATHER_TYPES.includes(q.target) || typeof G.inventory[q.target] !== 'number') return false;
+  }
   return Number.isFinite(q.progress) && Number.isFinite(q.need) && q.need > 0 &&
     Number.isFinite(q.refillT);
 }
 
 /**
- * Build the tracker and fill every empty slot with a fresh contract
- * (slots restored earlier by loadGame are kept). Subscribes progress events.
+ * Build the tracker and deal a contract into every empty slot. At boot all
+ * three are empty (loadGame runs later, on Continue, and then replaces slots
+ * and genCount wholesale). Subscribes progress events.
  */
 export function createQuests() {
   if (inited) return;
   inited = true;
   rng = makeRng((CONFIG.seed + 4242) >>> 0);
-  // Restored by loadGame for saved runs; fresh boots start the stream at 0.
+  // Fresh boots start the stream at 0; Continue's loadGame overwrites it
+  // from the save alongside the slots.
   if (!Number.isFinite(G.quests.genCount)) G.quests.genCount = 0;
   injectStyles();
   buildDom();

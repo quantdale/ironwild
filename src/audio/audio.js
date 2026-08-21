@@ -918,6 +918,12 @@ export function updateAudio(_dt) {
     const rainy = w.type === 'rain' || w.type === 'storm';
     const rainT = rainy ? clamp(w.intensity, 0, 1) * 0.16 : 0;
     if (Math.abs(rainT - lastRainT) > 0.004) { lastRainT = rainT; glideGain(rainGain, rainT, 0.5); }
+    // Wind loudness tracks the live weather wind + gust field (the LFO wired
+    // to this param at init only adds a small idle wobble on top).
+    if (windGain) {
+      const windT = 0.03 + clamp(w.wind, 0, 1) * 0.05 + (w.gust || 0) * 0.02;
+      glideGain(windGain, windT, 0.6);
+    }
     // weather.js logs each bolt (lastStrikeAt/lastStrikeDist); boom once per
     // entry, delayed/volume'd by distance, with a min-gap for clustered bolts
     if (typeof w.lastStrikeAt === 'number' && w.lastStrikeAt > lastHandledStrikeAt) {
@@ -972,6 +978,10 @@ bus.on('machineDied', (p) => {
   const pos = p ? p.pos : null;
   sfx('machineDeath', { pos });
   sfx('machineGrowl', { pos, size: 1.7 }); // layered dying roar
+});
+bus.on('machineAlert', (p) => {
+  const pos = p ? p.pos : null;
+  sfx('machineAlert', { pos }); // AI spot/telegraph chirp (emitted by machines/ai.js)
 });
 bus.on('playerHit', () => sfx('playerHurt'));
 bus.on('playerHealed', () => sfx('playerHeal'));

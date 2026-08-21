@@ -65,6 +65,7 @@ class InputManager {
     return out;
   }
 
+  /** Read and clear accumulated wheel motion. Returns deltaY. */
   consumeWheel() {
     const d = this.wheelDelta;
     this.wheelDelta = 0;

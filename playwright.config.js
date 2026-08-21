@@ -8,11 +8,14 @@ export default defineConfig({
   testDir: './tests/e2e',
   timeout: 60_000,
   retries: process.env.CI ? 1 : 0,
-  reporter: [['list']],
+  // HTML report (written to playwright-report/, never auto-opened) gives CI a
+  // failure artifact; list keeps local runs readable.
+  reporter: [['list'], ['html', { open: 'never' }]],
   use: {
     baseURL: 'http://localhost:4173',
     headless: process.env.IW_E2E_HEADED !== '1',
     viewport: { width: 1280, height: 720 },
+    trace: 'on-first-retry',
   },
   webServer: {
     command: 'npm run preview -- --port 4173 --strictPort',

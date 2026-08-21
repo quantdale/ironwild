@@ -1,7 +1,8 @@
 // IRONWILD - recurve bow: procedural model, draw/release, sway, arrow spawning.
 // The bow visual is attached to the player's left hand; firing reads the aim
 // basis written by camera.js and delegates ballistics to combat/projectiles.js.
-// v2: KeyX toggles standard/fire arrows (fire consumes its own inventory pool).
+// v2: KeyX or mouse wheel toggles standard/fire arrows (fire consumes its own
+// inventory pool).
 
 import * as THREE from 'three';
 import { G, CONFIG } from '../core/state.js';
@@ -18,6 +19,8 @@ const SWAY_AMPLITUDE = 0.004;  // rad of aim wander at zero draw
 const SWAY_FREQ = 3.1;         // rad/s of the sway oscillation
 const CONVERGE_DIST = 45;      // crosshair convergence distance (m)
 const NOTIFY_THROTTLE = 2.0;   // s between "Out of arrows" toasts
+const WHEEL_NOTCH = 100;       // deltaY of wheel travel that counts as one notch
+const WHEEL_COOLDOWN = 0.15;   // s between wheel-driven arrow-type swaps
 
 // Palette (ARCHITECTURE.md style guide).
 const WOOD_COLOR = 0x6b4a2f;
@@ -57,6 +60,8 @@ const _tipBottom = new THREE.Vector3();
 let _drawT = 0;                // 0..1 draw fraction
 let _drawing = false;          // true while the string is being pulled
 let _lastNoAmmoAt = -Infinity;
+let _wheelAccum = 0;           // wheel deltaY banked toward the next notch
+let _lastWheelSwap = -Infinity;
 let _nockedFletchMat = null;   // tinted to show the selected arrow type
 
 function onMouseDown(e) { if (e.button === 0) _lmbDown = true; }
@@ -89,8 +94,21 @@ export function updateBow(dt) {
   const active = !!player && !player.dead && G.started && !G.paused && !G.gameOver;
   const aiming = active && G.cam.aiming;
 
-  // v2: KeyX swaps arrow type; switching INTO fire needs stock in the pool.
+  // v2: KeyX or mouse wheel swaps arrow type; switching INTO fire needs stock.
   if (active && Input.pressed('KeyX')) toggleArrowType();
+
+  // Wheel cycling (active frames only): bank deltaY until a full notch
+  // accrues, then swap. The cooldown keeps a fast flick to one swap per step;
+  // the wheel listener is passive and never preventDefault'ed, so scrolling
+  // neither fires/aims/draws nor touches pointer-lock look.
+  if (active) {
+    _wheelAccum += Input.consumeWheel();
+    if (Math.abs(_wheelAccum) >= WHEEL_NOTCH && G.elapsed - _lastWheelSwap >= WHEEL_COOLDOWN) {
+      _wheelAccum = 0;
+      _lastWheelSwap = G.elapsed;
+      toggleArrowType();
+    }
+  }
 
   // Fire arrows come out of their own pool; standard arrows still work as a
   // fallback when the fire pool runs dry mid-type.

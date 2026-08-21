@@ -1,14 +1,14 @@
 // IRONWILD - weather system: deterministic clear->breeze->rain->storm cycle,
 // recycled rain particle sheet following the player, storm lightning (screen
 // flash + dedicated flash light) and smooth wind gusts. Owns G.weather
-// ({type,intensity,wind} + strike log for audio-v2 thunder); terrain/props/
-// environment only READ it. Rain/thunder SFX live in audio/audio.js - this
-// module emits no sound events.
+// ({type,intensity,wind,gust} + strike log for audio-v2 thunder); terrain/
+// props/environment only READ it. Rain/thunder SFX live in audio/audio.js -
+// this module emits no sound events.
 
 import * as THREE from 'three';
 import { G, CONFIG } from '../core/state.js';
 import { bus } from '../core/events.js';
-import { clamp, lerp, smoothstep, damp, makeRng, randRange, valueNoise2 } from '../core/utils.js';
+import { clamp, lerp, smoothstep, damp, makeRng, randRange, valueNoise2, fbm2 } from '../core/utils.js';
 import { heightAt } from './terrain.js';
 
 // --- tuning -----------------------------------------------------------------
@@ -54,6 +54,7 @@ let flashLevel = 0;          // 0..1 current screen flash amount
 let flashLight = null;       // our own white directional light (see NOTE above)
 
 let clockT = 0;              // position in the weather loop [0, LOOP_LEN)
+let gustT = 0;               // unbounded gust-field time (clockT wraps; the noise must not)
 let nextStrikeIn = 0;        // countdown to next lightning bolt (storm only)
 const rng = makeRng(CONFIG.seed ^ 0x57eaf00d);
 
@@ -73,6 +74,7 @@ export function createWeather() {
   G.weather.wind = 0.3;
   G.weather.lastStrikeAt = -999; // no strikes yet (audio-v2 reads this)
   G.weather.lastStrikeDist = 0;
+  G.weather.gust = 0;          // live gust strength 0..1 (audio-v2 wind bed)
 
   // Cumulative phase start times.
   phaseStarts = [];
@@ -216,14 +218,20 @@ export function updateWeather(dt) {
   if (phase.name === 'rain') targetI *= smoothstep(0, 0.25, t);
   else if (phase.name === 'clearing') targetI = 1 - smoothstep(0, 0.8, t);
 
-  // Wind: phase base plus a smooth gust term (value noise over time).
-  const gust = valueNoise2(clockT * 0.16, 4.27, CONFIG.seed + 77) * 2 - 1;
+  // Wind: layered value-noise gust field over unbounded gustT (clockT wraps
+  // every loop and would pop the noise lattice). A slow 3-octave fbm swell
+  // carries the gust, a faster single octave layers short flutter on top.
+  gustT += dt;
+  const swell = fbm2(gustT * 0.05, 4.27, 3, 2, 0.5, CONFIG.seed + 77) * 2 - 1;
+  const flutter = valueNoise2(gustT * 0.9, 9.13, CONFIG.seed + 91) * 2 - 1;
+  const gust = swell * 0.72 + flutter * 0.28;
   const targetW = clamp(phase.wind + gust * 0.22, 0, 1);
 
   // Smooth everything so phase edges never pop.
   const w = G.weather;
   w.intensity = damp(w.intensity, targetI, 0.9, dt);
   w.wind = damp(w.wind, targetW, 1.4, dt);
+  w.gust = clamp(gust, 0, 1); // live gust strength 0..1 for sfx consumers
   w.type = w.intensity <= 0.02 ? 'clear' : phase.type;
 
   // Anchor the sheet on the player (camera before the game starts).

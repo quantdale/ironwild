@@ -47,6 +47,7 @@ const DUSKWING_DIVE_DMG = 18;
 const DUSKWING_STUN = 2.5;       // grounded + stunned after each dive
 const DUSKWING_CLIMB_LOCK = 6;   // must climb back up this long before diving
 const DUSKWING_TELEGRAPH = 0.85; // shadow-circle grow time
+const DUSKWING_WADE_RADII = [8, 16, 24]; // wade probe rings - widened when all-wet
 
 // v2: bulwark attacks
 const BULWARK_ROLL_DMG = 22;
@@ -393,6 +394,9 @@ function enterAttack(m) {
   ai.stateT = 0;
   ai.atk = null;
   m.aggro = true;
+  // one-shot alert cue for audio/FX consumers - the re-entry guard above keeps
+  // this to exactly one emit per calm->aggravated transition
+  bus.emit('machineAlert', { pos: m.group.position.clone() });
   // v3: a bolting bramblehorn panics nearby herdmates into fleeing too
   if (m.type === 'bramblehorn') stampedeHerd(m);
   // alert nearby machines - unless a skitter's optic is broken and it can't call out
@@ -501,6 +505,11 @@ function tickMachine(m, dt) {
   // water-blocked out here and every regenerated waypoint fails its dry check
   if (m.type === 'duskwing' && ai.grounded &&
     heightAt(m.group.position.x, m.group.position.z) < CONFIG.waterLevel) {
+    // consume hits mid-wade too, else they queue up until shore
+    if (m.hitFlag) {
+      m.hitFlag = false;
+      if (ai.state !== 'attack') enterAttack(m);
+    }
     duskwingWade(m, dt);
     m.group.position.y = Math.max(
       heightAt(m.group.position.x, m.group.position.z),
@@ -706,18 +715,25 @@ function duskwingDrift(m, dt) {
 }
 
 /** Wingless splash-down escape: turn toward the driest of 8 nearby headings
- * and swim-walk until ashore (tickMachine routes grounded-in-water birds here). */
+ * and swim-walk until ashore (tickMachine routes grounded-in-water birds here).
+ * An all-wet sweep widens the probe ring 8 -> 16 -> 24u before falling back to
+ * the shallowest sample seen, so deep-basin birds still climb toward shore. */
 function duskwingWade(m, dt) {
   const x = m.group.position.x;
   const z = m.group.position.z;
   let bestAng = m.group.rotation.y;
   let bestH = -Infinity;
-  for (let i = 0; i < 8; i++) {
-    const ang = (i / 8) * Math.PI * 2;
-    const h = heightAt(x + Math.sin(ang) * 8, z + Math.cos(ang) * 8);
-    if (h > bestH) {
-      bestH = h;
-      bestAng = ang;
+  let allWet = true;
+  for (let ri = 0; ri < DUSKWING_WADE_RADII.length && allWet; ri++) {
+    const r = DUSKWING_WADE_RADII[ri];
+    for (let i = 0; i < 8; i++) {
+      const ang = (i / 8) * Math.PI * 2;
+      const h = heightAt(x + Math.sin(ang) * r, z + Math.cos(ang) * r);
+      if (h > bestH) {
+        bestH = h;
+        bestAng = ang;
+      }
+      if (h >= CONFIG.waterLevel) allWet = false; // dry landing found: stop widening
     }
   }
   turnToward(m, x + Math.sin(bestAng) * 8, z + Math.cos(bestAng) * 8, 3, dt);
@@ -1135,6 +1151,9 @@ function bulwarkAttack(m, dt, dist) {
 function startMireAmbush(m) {
   const ai = m._ai;
   const dist = distToPlayer(m);
+  // alert cue only on the lurk->strike escalation; re-ambushes mid-chase are
+  // not new transitions (mirrors enterAttack's re-entry guard)
+  if (ai.state !== 'attack') bus.emit('machineAlert', { pos: m.group.position.clone() });
   ai.state = 'attack';
   ai.atk = 'lunge';
   ai.phaseT = 0;
@@ -1163,6 +1182,7 @@ function mirefangTick(m, dt) {
       ai.state = 'attack';
       ai.atk = null;
       m.aggro = true;
+      bus.emit('machineAlert', { pos: m.group.position.clone() });
     }
   }
 

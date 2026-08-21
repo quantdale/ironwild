@@ -579,6 +579,13 @@ function boot() {
   // Right mouse is aim-hold; never show the browser context menu.
   window.addEventListener('contextmenu', (e) => e.preventDefault());
 
+  // Page teardown: stop weather loops and release its GPU/DOM resources
+  // (bfcache entry, SPA-style embeds). A normal restart is a full reload,
+  // but an explicit dispose keeps the module's contract honest.
+  window.addEventListener('pagehide', () => {
+    if (weatherMod.disposeWeather) weatherMod.disposeWeather();
+  });
+
   // Tab hidden -> force pause; menus own the resume flow.
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) G.paused = true;

@@ -14,6 +14,7 @@ const TICK_DMG = BURN_DPS * TICK_INTERVAL;
 const TICK_POOL = 16;         // concurrent burn tick numbers
 const TICK_DUR = 0.7;         // tick number lifetime
 const TICK_RISE = 1.0;        // world units a tick number climbs
+const MAX_TICKS_PER_FRAME = 32; // defensive cap on catch-up ticks in one update
 
 const _pt = new THREE.Vector3();
 
@@ -100,6 +101,7 @@ export function applyBurn(machine, seconds = BURN_DURATION) {
     machine.burnAcc = 0; // partial progress toward the next tick
   }
   machine.burnT = dur;   // refresh: restart the full timer
+  machine.burnAcc = 0;   // ...and the tick accumulator, so the next tick lands a full interval out
   machine.panicT = dur;  // consumed by machines/ai.js (flee briefly)
   machine.panic = true;
   if (!inited && G.scene) createStatusFX();
@@ -136,9 +138,13 @@ export function updateStatusFX(dt) {
       m.panic = false;
       continue;
     }
+    // Only time actually spent burning accrues ticks, so a frame that outlasts
+    // the remaining burn still lands every fully-elapsed interval within it.
+    const burnSeconds = Math.min(dt, m.burnT);
     m.burnT -= dt;
-    m.burnAcc += dt;
-    while (m.burnAcc >= TICK_INTERVAL && m.burnT > 0 && m.alive) {
+    m.burnAcc += burnSeconds;
+    let guard = MAX_TICKS_PER_FRAME; // cap catch-up work after huge frame gaps
+    while (m.burnAcc >= TICK_INTERVAL && m.alive && guard-- > 0) {
       m.burnAcc -= TICK_INTERVAL;
       _pt.copy(m.group.position);
       _pt.y += 1.2 + m.radius * 0.5;
@@ -146,6 +152,13 @@ export function updateStatusFX(dt) {
       // front-cone test (machines.js isFrontConeHit) and deflect every tick.
       const landed = m.hit(TICK_DMG, null, null) !== false; // may kill the machine
       if (landed) spawnTickNumber(TICK_DMG, _pt);
+      if (!m.alive) { // killed by this tick: drop burn state now, not next pass
+        m.burnT = 0;
+        m.burnAcc = 0;
+        m.panicT = 0;
+        m.panic = false;
+        break;
+      }
     }
     if (m.burnT <= 0 || !m.alive) {
       m.burnT = Math.max(0, m.burnT);
