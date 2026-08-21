@@ -6,7 +6,6 @@ import { expect, test } from '@playwright/test';
 import {
   playerPos,
   startGame,
-  tapKey,
   waitControlSettled,
 } from './helpers.js';
 
