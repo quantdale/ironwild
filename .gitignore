@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.playwright-mcp/
+.build-check*/
+screenshots/*
+!screenshots/ironwild-start.png
+*.log
