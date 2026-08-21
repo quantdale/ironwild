@@ -8,13 +8,65 @@
 // detuned saw pad crossfaded by G.bossNear) and bus-driven victory sting /
 // melee whoosh / level-up fanfare. Everything is guarded so calls before
 // initAudio() no-op.
+// Wave I additions: central voice registry with per-category caps + steal rules
+// (getVoiceStats -> window.__IW_AUDIO_STATS), a pooled positional emitter API
+// (emitAt -> emitters.js), surface-aware footsteps, 'impact' material layers,
+// damaged-machine stress creaks, intensity-linked weather crossfades,
+// hysteresis escalation tiers (calm/tense/combat/boss), an optional sample-bank
+// fallback (setSampleBank) and per-machine-type audio identities.
 
 import { bus } from '../core/events.js';
-import { G } from '../core/state.js';
+import { G, CONFIG } from '../core/state.js';
 import { clamp, lerp, smoothstep } from '../core/utils.js';
+import { biomeAt } from '../world/terrain.js';
+import { createEmitters, updateEmitters, emitAt as emitterEmitAt, getEmitterStats } from './emitters.js';
 
 const MAX_VOICES = 24; // hard cap on simultaneous one-shot voices
 const EAR_RANGE = 60;  // positional falloff distance in world units
+
+// Wave I voice management: per-category concurrency caps on top of the global
+// MAX_VOICES ceiling. A saturated category steals its oldest lowest-priority
+// voice instead of leaking into other categories (e.g. 10 UI clicks can no
+// longer starve positional combat sounds).
+const VOICE_CAPS = { ambience: 4, machine: 6, combat: 8, ui: 4 };
+// Category lookup for every SYNTHS name; unlisted names fall back to 'combat'
+// so unknown future synths are capped conservatively rather than uncapped.
+const SFX_CATEGORY = {
+  // machine family
+  machineStep: 'machine', machineGrowl: 'machine', growl: 'machine',
+  screech: 'machine', machineAlert: 'machine', machineDeath: 'machine',
+  // ui / feedback family
+  uiClick: 'ui', uiOpen: 'ui', uiClose: 'ui', pickup: 'ui', craft: 'ui',
+  skillUp: 'ui', levelUp: 'ui', playerHeal: 'ui',
+  // ambience family (heartbeat/birds/crickets/thunder register manually below)
+  stepSoil: 'ambience', stepForest: 'ambience', stepStone: 'ambience',
+  stepWater: 'ambience',
+  stressCreak: 'machine', // damaged-machine beds share the machine budget
+};
+// Default steal priorities (0 = first stolen). One-shots may override via
+// opts.priority; higher = more protective.
+const DEFAULT_PRIO = { ambience: 1, machine: 3, combat: 4, ui: 2 };
+// Coarse per-name tail lengths (seconds) for time-based registry expiry — the
+// accounting slot frees even when a synth returns no single long source node.
+// Values are upper bounds; real nodes usually end sooner via their envelopes.
+const SYNTH_DUR = {
+  bowDraw: 0.45, bowRelease: 0.3, arrowHitFlesh: 0.22, arrowHitMetal: 1.0,
+  weakBreak: 0.6, machineStep: 0.25, machineGrowl: 0.9, growl: 1.2,
+  machineAlert: 0.32, screech: 0.45, machineDeath: 1.3, playerHurt: 0.3,
+  playerHeal: 0.55, pickup: 0.4, uiClick: 0.1, uiOpen: 0.3, uiClose: 0.28,
+  craft: 0.62, skillUp: 0.68, dodge: 0.26, victorySting: 0.58,
+  meleeWhoosh: 0.28, levelUp: 0.78,
+  // Wave I additions
+  stepSoil: 0.15, stepForest: 0.18, stepStone: 0.14, stepWater: 0.24,
+  impactMetal: 0.5, impactStone: 0.18, impactSoil: 0.18, impactWood: 0.22,
+  impactWater: 0.4, stressCreak: 0.85,
+};
+
+// Live one-shot registry: {cat, prio, t0, end, src, done}. Time-based expiry
+// (end) drives pruning so batches of short tones (bird chirps, craft knocks)
+// count as one voice without needing an onended hook on every node.
+const voiceReg = [];
+let voicesStolen = 0;   // cumulative steal counter (perf HUD diagnostics)
 
 let ctx = null;         // AudioContext, created lazily by initAudio()
 let master = null;      // master gain (0.5 * settings.master) -> destination
@@ -22,8 +74,9 @@ let busIn = null;       // entry point for all one-shot sfx (dry + reverb send)
 let ambienceIn = null;  // entry point for ambience loops (skips reverb)
 let noiseBuf = null;    // shared 1.5s white-noise buffer for bursts
 let windBuf = null;     // 4s looped noise buffer for wind
-let voices = 0;         // live one-shot voice count
+let voices = 0;         // live one-shot voice count (registry-maintained)
 let unlocked = false;   // set by the first real user gesture (hooks at EOF)
+let _pitchScale = 1;    // machine-identity transpose factor (1 outside sfx())
 
 // v2 volume stages + music/weather buses (created in initAudio)
 let sfxGain = null;     // sfx volume stage; dry + reverb paths both pass through
@@ -53,6 +106,16 @@ let lastHandledStrikeAt = -1;                         // < w.lastStrikeAt => boo
 let bossGain = null;                  // boss music bus (war drums + detuned saw pad)
 let lastBossT = -1;                   // boss crossfade glide cache
 let nextDrumAt = 0;                   // war-drum lookahead scheduler
+
+// Wave I state touched by updateAudio() / bus wiring
+let combatTier = 'calm';              // escalation: calm|tense|combat|boss
+let rainLPF = null;                   // rain bed brightness filter (intensity-linked)
+let stormGain = null;                 // storm sub-rumble bed gain
+let lastStormT = -1;                  // storm bed glide cache
+const stressBeds = new Map();         // damaged machine -> next creak time
+let stepAccum = 0;                    // stride driver: horizontal meters walked
+let lastStepX = 0, lastStepZ = 0;     // stride driver: previous player pos
+let lastBusStepAt = -99;              // audio clock of last 'footstep' bus event
 
 // drone pad chords: day A-E (bright) vs night F-C (dark)
 const CHORD_DAY = { root: 110.0, fifth: 164.81 };   // A2 / E3
@@ -86,16 +149,19 @@ function makeImpulse(dur, decay) {
 // attn is the positional attenuation multiplier computed once per sfx call.
 
 /** Enveloped oscillator voice. Extra: f0->f1 freq ramp (over glideT or dur),
- *  detune cents, lpf = inline lowpass frequency to soften raw waveforms. */
+ *  detune cents, lpf = inline lowpass frequency to soften raw waveforms.
+ *  _pitchScale transposes both endpoints (Wave I machine-identity shaping;
+ *  it is 1 everywhere except inside the synchronous sfx() identity window). */
 function toneVoice(o) {
+  const ps = _pitchScale;
   const t0 = o.t0 != null ? o.t0 : ctx.currentTime;
   const dur = o.dur != null ? o.dur : 0.2;
   const osc = ctx.createOscillator();
   osc.type = o.type || 'sine';
-  osc.frequency.setValueAtTime(Math.max(1, o.f0), t0);
+  osc.frequency.setValueAtTime(Math.max(1, o.f0 * ps), t0);
   if (o.f1 != null && o.f1 !== o.f0) {
     const gt = o.glideT != null ? o.glideT : dur;
-    osc.frequency.exponentialRampToValueAtTime(Math.max(1, o.f1), t0 + gt);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(1, o.f1 * ps), t0 + gt);
   }
   if (o.detune) osc.detune.value = o.detune;
   const g = ctx.createGain();
@@ -120,8 +186,10 @@ function toneVoice(o) {
 }
 
 /** Enveloped filtered-noise voice cut from the shared buffer. Extra: filter
- *  type + f0->fMid (at fMidT)->f1 sweep, q, random offset for variety. */
+ *  type + f0->fMid (at fMidT)->f1 sweep, q, random offset for variety.
+ *  _pitchScale shifts the whole formant sweep (identity shaping, see above). */
 function noiseVoice(o) {
+  const ps = _pitchScale;
   const t0 = o.t0 != null ? o.t0 : ctx.currentTime;
   const dur = o.dur != null ? o.dur : 0.2;
   const src = ctx.createBufferSource();
@@ -130,12 +198,12 @@ function noiseVoice(o) {
   const off = o.offset != null ? o.offset : Math.random() * Math.max(0, noiseBuf.duration - dur - 0.1);
   const f = ctx.createBiquadFilter();
   f.type = o.filter || 'lowpass';
-  f.frequency.setValueAtTime(Math.max(20, o.f0 != null ? o.f0 : 1000), t0);
+  f.frequency.setValueAtTime(Math.max(20, (o.f0 != null ? o.f0 : 1000) * ps), t0);
   if (o.fMid != null) {
-    f.frequency.exponentialRampToValueAtTime(Math.max(20, o.fMid), t0 + (o.fMidT != null ? o.fMidT : dur * 0.5));
+    f.frequency.exponentialRampToValueAtTime(Math.max(20, o.fMid * ps), t0 + (o.fMidT != null ? o.fMidT : dur * 0.5));
   }
   if (o.f1 != null && o.f1 !== o.f0) {
-    f.frequency.exponentialRampToValueAtTime(Math.max(20, o.f1), t0 + dur);
+    f.frequency.exponentialRampToValueAtTime(Math.max(20, o.f1 * ps), t0 + dur);
   }
   f.Q.value = o.q != null ? o.q : 0.8;
   const g = ctx.createGain();
@@ -424,17 +492,248 @@ const SYNTHS = {
     });
     return last;
   },
+
+  // ---- Wave I: surface-aware footsteps (stride driver + 'footstep' bus) ----
+
+  // soil/meadow/shore: soft lowpass scuff; running tightens + loudens
+  stepSoil(o, a) {
+    const run = o && o.running ? 1.3 : 1;
+    return noiseVoice({
+      dur: 0.09, vol: 0.11 * run, filter: 'lowpass',
+      f0: 430 + Math.random() * 120, f1: 160, q: 0.8, attack: 0.004, attn: a,
+    });
+  },
+
+  // forest floor: softer attack plus faint leaf-litter shimmer on top
+  stepForest(o, a) {
+    const run = o && o.running ? 1.25 : 1;
+    const n = noiseVoice({
+      dur: 0.12, vol: 0.085 * run, filter: 'lowpass',
+      f0: 340 + Math.random() * 80, f1: 130, q: 0.7, attack: 0.014, attn: a,
+    });
+    noiseVoice({ dur: 0.06, vol: 0.03 * run, filter: 'highpass', f0: 2400, q: 0.5, attack: 0.004, attn: a });
+    return n;
+  },
+
+  // highland rock: harder two-part click (toe tick + heel knock)
+  stepStone(o, a) {
+    const run = o && o.running ? 1.3 : 1;
+    noiseVoice({ dur: 0.04, vol: 0.07 * run, filter: 'highpass', f0: 1500, q: 0.7, attack: 0.002, attn: a });
+    return toneVoice({ f0: 210 + Math.random() * 40, f1: 130, dur: 0.07, vol: 0.09 * run, attack: 0.002, lpf: 1800, attn: a });
+  },
+
+  // shallow water: splashy bandpass swish + one droplet sparkle
+  stepWater(o, a) {
+    const run = o && o.running ? 1.35 : 1;
+    const n = noiseVoice({
+      dur: 0.16, vol: 0.13 * run, filter: 'bandpass',
+      f0: 700, fMid: 1900, fMidT: 0.05, f1: 500, q: 1.1, attack: 0.006, attn: a,
+    });
+    toneVoice({
+      t0: ctx.currentTime + 0.07, f0: 1150 + Math.random() * 350, f1: 1700,
+      dur: 0.06, vol: 0.03 * run, attack: 0.004, attn: a,
+    });
+    return n;
+  },
+
+  // ---- Wave I: impact material categories ('impact' bus payloads) ----------
+  // Layered onto existing hit sounds by combat FX; opts.strength (default 1)
+  // scales loudness and ring length.
+
+  // metal: mid clang partials + bright transient (lower than arrowHitMetal)
+  impactMetal(o, a) {
+    const s = clamp(o && o.strength != null ? o.strength : 1, 0.2, 2);
+    const d = Math.random() * 30 - 15; // per-hit detune variety
+    const p = toneVoice({ f0: 520 + d, f1: 480 + d, dur: 0.34 / Math.sqrt(s), vol: 0.22 * s, attack: 0.002, attn: a });
+    toneVoice({ f0: 1560 + d * 2, dur: 0.18, vol: 0.1 * s, attack: 0.002, attn: a });
+    noiseVoice({ dur: 0.03, vol: 0.16 * s, filter: 'highpass', f0: 3000, q: 0.7, attack: 0.001, attn: a });
+    return p;
+  },
+
+  // stone: dry crack burst over a dull body thump
+  impactStone(o, a) {
+    const s = clamp(o && o.strength != null ? o.strength : 1, 0.2, 2);
+    noiseVoice({ dur: 0.09, vol: 0.26 * s, filter: 'bandpass', f0: 760, fMid: 320, fMidT: 0.05, q: 1.6, attack: 0.002, attn: a });
+    return toneVoice({ f0: 150, f1: 62, dur: 0.13, vol: 0.24 * s, attack: 0.003, attn: a });
+  },
+
+  // soil: soft dirt thud, almost no ring
+  impactSoil(o, a) {
+    const s = clamp(o && o.strength != null ? o.strength : 1, 0.2, 2);
+    return noiseVoice({ dur: 0.12, vol: 0.28 * s, filter: 'lowpass', f0: 260, f1: 90, q: 0.9, attack: 0.004, attn: a });
+  },
+
+  // wood: hollow double knock (boxy low-mid partials)
+  impactWood(o, a) {
+    const s = clamp(o && o.strength != null ? o.strength : 1, 0.2, 2);
+    toneVoice({ f0: 196, f1: 148, dur: 0.07, vol: 0.22 * s, attack: 0.002, lpf: 900, attn: a });
+    return toneVoice({ t0: ctx.currentTime + 0.055, f0: 172, f1: 128, dur: 0.09, vol: 0.18 * s, attack: 0.002, lpf: 850, attn: a });
+  },
+
+  // water: splash swell + scattered droplets + displacement thump
+  impactWater(o, a) {
+    const s = clamp(o && o.strength != null ? o.strength : 1, 0.2, 2);
+    const n = noiseVoice({
+      dur: 0.3, vol: 0.3 * s, filter: 'bandpass',
+      f0: 520, fMid: 1600, fMidT: 0.06, f1: 380, q: 0.9, attack: 0.008, attn: a,
+    });
+    for (let i = 0; i < 3; i++) {
+      toneVoice({
+        t0: ctx.currentTime + 0.08 + i * 0.05, f0: 900 + Math.random() * 800,
+        f1: 1500, dur: 0.05, vol: 0.035 * s, attack: 0.004, attn: a,
+      });
+    }
+    toneVoice({ f0: 90, f1: 45, dur: 0.18, vol: 0.14 * s, attack: 0.005, attn: a });
+    return n;
+  },
+
+  // damaged-machine metal-stress creak: slow groaning bandpass swell.
+  // Scheduled periodically per tracked machine — deliberately NOT a persistent
+  // loop node, so the pause/restart lifecycle keeps zero extra loops to manage.
+  stressCreak(o, a) {
+    const v = clamp(o && o.vol != null ? o.vol : 0.08, 0.02, 0.16);
+    return noiseVoice({
+      dur: 0.75, vol: v, filter: 'bandpass',
+      f0: 310 + Math.random() * 90, fMid: 175, fMidT: 0.45, q: 6,
+      attack: 0.28, attn: a,
+    });
+  },
 };
+
+// --------------------------------------------- sample bank (asset fallback) --
+// Wave I: optional asset-backed layer. setSampleBank(map) registers AudioBuffers
+// keyed by synth name; sfx() then plays the buffer instead of the synth when a
+// matching entry exists. The bank starts null, so today every sound stays 100%
+// synthesized — no loading code lives here (the asset pipeline owns fetching).
+
+let sampleBank = null; // id -> AudioBuffer registered against THIS ctx
+
+/** Register (or clear with null) named AudioBuffers used before synth fallback.
+ *  Buffers created on a different context still play in practice, but re-set
+ *  the bank after initAudio() if sample-accurate behavior matters. */
+export function setSampleBank(bank) {
+  sampleBank = bank && typeof bank === 'object' ? bank : null;
+}
+
+/** Play bank[id] if available, else run the synthesized fallback. Returns the
+ *  source node (either kind) so sfx()'s voice accounting keeps working. */
+function playSampleOrSynth(id, fallbackFn, opts, attn) {
+  const buf = sampleBank ? sampleBank[id] : null;
+  if (!ctx || !buf || !(buf.sampleRate > 0)) {
+    return fallbackFn ? fallbackFn(opts, attn) : null;
+  }
+  try {
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const g = ctx.createGain(); // samples bypass tone/noise envelopes: flat stage
+    g.gain.value = 0.9 * (attn != null ? attn : 1);
+    src.connect(g);
+    g.connect(opts.dest || busIn);
+    src.start();
+    return src;
+  } catch (_err) {
+    return fallbackFn ? fallbackFn(opts, attn) : null; // broken buffer -> synth
+  }
+}
+
+// ------------------------------------------------ Wave I machine identities --
+// Per-type presets layered over the shared machine synths so each chassis is
+// recognizable by ear alone. pitch transposes helper voices inside sfx()'s
+// synchronous window (module _pitchScale); layer adds a quiet character tail.
+// Unknown types get no identity — existing sounds are untouched for them.
+
+const MACHINE_VOICES = new Set([
+  'machineStep', 'machineGrowl', 'growl', 'screech', 'machineAlert', 'machineDeath',
+]);
+const IDENTITY_RADIUS = 6; // world units to match an sfx pos to its machine
+
+function chitterLayer(o, a) { // skitter: fast high ticks after vocalizations
+  const t = ctx.currentTime;
+  let last = null;
+  for (let i = 0; i < 3; i++) {
+    last = noiseVoice({
+      t0: t + i * 0.045, dur: 0.03, vol: 0.05, filter: 'bandpass',
+      f0: 2600 + Math.random() * 700, q: 5, attack: 0.003,
+      dest: o.dest || busIn, attn: a,
+    });
+  }
+  return last;
+}
+
+function hydraulicLayer(o, a) { // ironmaw: servo drop + pressure hiss
+  const t = ctx.currentTime;
+  toneVoice({
+    t0: t, f0: 64, f1: 30, dur: 0.28, vol: 0.16, attack: 0.01,
+    dest: o.dest || busIn, attn: a,
+  });
+  return noiseVoice({
+    t0: t + 0.04, dur: 0.22, vol: 0.06, filter: 'lowpass',
+    f0: 900, f1: 220, q: 1.4, dest: o.dest || busIn, attn: a,
+  });
+}
+
+function shriekLayer(o, a) { // duskwing: airy rise-and-fall over screeches
+  return noiseVoice({
+    dur: 0.38, vol: 0.06, filter: 'bandpass',
+    f0: 800, fMid: 2400, fMidT: 0.14, f1: 1100, q: 4, attack: 0.05,
+    dest: o.dest || busIn, attn: a,
+  });
+}
+
+function bellowsLayer(o, a) { // monarch: sub swell + faint inharmonic partial
+  const t = ctx.currentTime;
+  toneVoice({
+    t0: t, f0: 34, f1: 26, dur: 0.6, vol: 0.15, attack: 0.12,
+    dest: o.dest || busIn, attn: a,
+  });
+  return toneVoice({
+    t0: t, f0: 92, f1: 88, dur: 0.55, vol: 0.045, attack: 0.1,
+    dest: o.dest || busIn, attn: a,
+  });
+}
+
+const MACHINE_IDENTITY = {
+  skitter: { pitch: 1.32, layer: chitterLayer },   // higher-pitched chitter
+  ironmaw: { pitch: 0.72, layer: hydraulicLayer }, // low hydraulic thuds
+  duskwing: { pitch: 1.12, layer: shriekLayer },   // emphasized screech sweeps
+  monarch: { pitch: 0.55, layer: bellowsLayer },   // sub-bellows drone weight
+};
+
+/** Nearest machine to pos (any life state — death roars fire at death). */
+function machineIdentityFor(pos) {
+  if (!pos || !G.machines || !G.machines.length) return null;
+  let best = null;
+  let bestD2 = IDENTITY_RADIUS * IDENTITY_RADIUS;
+  for (const m of G.machines) {
+    if (!m || !m.group || !m.group.position) continue;
+    const p = m.group.position;
+    const dx = p.x - pos.x, dy = p.y - pos.y, dz = p.z - pos.z;
+    const d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 <= bestD2) { bestD2 = d2; best = m; }
+  }
+  return best ? MACHINE_IDENTITY[best.type] || null : null;
+}
+
+function playIdentityLayer(idn, name, opts, attn) {
+  // skip per-step character tails on light chassis (too busy); heavy ironmaw/
+  // monarch footfalls deserve their layer on every step
+  if (name === 'machineStep' && (idn.layer === chitterLayer || idn.layer === shriekLayer)) return;
+  idn.layer(opts, attn);
+}
 
 // --------------------------------------------------------------- ambience --
 
 function heartbeatBeat(t0) {
+  const grant = ambienceVoice(0.4, 2); // lub-dub counts against the amb cap
+  if (!grant) return;
   // lub-dub pair routed dry (no reverb) for intimacy
   toneVoice({ t0, f0: 58, f1: 38, dur: 0.13, vol: 0.3, attack: 0.005, dest: ambienceIn });
   toneVoice({ t0: t0 + 0.17, f0: 52, f1: 34, dur: 0.11, vol: 0.2, attack: 0.005, dest: ambienceIn });
 }
 
 function birdChirp(t0) {
+  const grant = ambienceVoice(0.5, 1);
+  if (!grant) return;
   const notes = 2 + Math.floor(Math.random() * 3);
   const base = 2300 + Math.random() * 1400;
   for (let i = 0; i < notes; i++) {
@@ -444,6 +743,8 @@ function birdChirp(t0) {
 }
 
 function crickets(t0) {
+  const grant = ambienceVoice(0.4, 1);
+  if (!grant) return;
   const reps = 5 + Math.floor(Math.random() * 3);
   for (let i = 0; i < reps; i++) {
     toneVoice({
@@ -573,6 +874,23 @@ function startV2Loops() {
   rainLP.connect(rainGain);
   rainGain.connect(ambienceIn);
   rainSrc.start(t);
+  rainLPF = rainLP; // kept for Wave I intensity-linked cutoff glides
+
+  // Wave I storm bed: same looped noise through a deep lowpass -> sub rumble;
+  // gain rides storm intensity via setTargetAtTime only (never stepped)
+  const stormSrc = ctx.createBufferSource();
+  stormSrc.buffer = windBuf;
+  stormSrc.loop = true;
+  const stormLP = ctx.createBiquadFilter();
+  stormLP.type = 'lowpass';
+  stormLP.frequency.value = 140;
+  stormLP.Q.value = 0.6;
+  stormGain = ctx.createGain();
+  stormGain.gain.value = 0;
+  stormSrc.connect(stormLP);
+  stormLP.connect(stormGain);
+  stormGain.connect(ambienceIn);
+  stormSrc.start(t);
 
   nextPluckAt = t + 1;
   nextPulseAt = t + 1;
@@ -707,6 +1025,7 @@ function thunderBoom(dist) {
   const d = clamp(dist != null ? dist : 120, 0, 300);
   const t = ctx.currentTime + Math.max(0.12, d / 340);
   const v = clamp(0.65 - d / 500, 0.1, 0.55);
+  if (!ambienceVoice(2.6, 3)) return; // amb cap: a skipped boom is fine
   noiseVoice({
     t0: t, dur: 2.4, vol: v, filter: 'lowpass',
     f0: 900, fMid: 220, fMidT: 0.5, f1: 55, q: 0.6, attack: 0.02,
@@ -780,6 +1099,9 @@ export function initAudio() {
   startAmbience();
   startV2Loops();
   startV3Loops();
+  // Wave I: positional emitter pool rides this context (idempotent inside;
+  // re-created only if the ctx ever changes)
+  createEmitters({ ctx, destination: busIn });
 
   if (ctx.state === 'suspended') ctx.resume().catch(() => {});
 }
@@ -793,21 +1115,126 @@ function posAttenuation(pos) {
   return clamp(1 - d / EAR_RANGE, 0, 1);
 }
 
-function releaseVoice() {
-  voices = Math.max(0, voices - 1);
+// ------------------------------------------------- Wave I surface footsteps --
+
+/** Cheap surface classification under the player: water when wading at/below
+ *  the waterline, else biome flavor (highland rock, forest litter, packed
+ *  earth elsewhere). biomeAt is a pure (x,z) lookup — no geometry passes. */
+function classifySurface() {
+  const p = G.player;
+  if (!p || !p.pos) return 'soil';
+  if (p.pos.y <= CONFIG.waterLevel + 0.25) return 'water';
+  let biome = 'meadow';
+  try { biome = biomeAt(p.pos.x, p.pos.z) || 'meadow'; } catch (_err) { /* keep default */ }
+  if (biome === 'highland') return 'stone';
+  if (biome === 'forest') return 'forest';
+  return 'soil'; // meadow + sandy shore both read as packed earth
 }
 
-/** Play a named one-shot. No-op before initAudio(); capped at MAX_VOICES;
- *  payload opts.pos attenuates volume by distance to G.player.pos and pans
- *  the voice through an equalpower PannerNode placed at that world position. */
+const STEP_SYNTHS = { soil: 'stepSoil', forest: 'stepForest', stone: 'stepStone', water: 'stepWater' };
+
+/** Play one footstep for the current surface (non-positional: it IS the player). */
+function playFootstep(running) {
+  sfx(STEP_SYNTHS[classifySurface()] || 'stepSoil', { running: !!running });
+}
+
+// ------------------------------------------------------------ voice pool --
+// Central accounting for one-shot voices. Grants are capped globally
+// (MAX_VOICES) and per category (VOICE_CAPS); a saturated category steals its
+// oldest lowest-priority live voice. Time-based expiry keeps the registry in
+// sync even when a synth returns no single long-lived source node.
+
+/** Drop expired records; returns nothing. Cheap: list is tiny (<= ~24). */
+function pruneVoices() {
+  const now = ctx ? ctx.currentTime : 0;
+  for (let i = voiceReg.length - 1; i >= 0; i--) {
+    const r = voiceReg[i];
+    if (!r.done && now >= r.end) finishVoice(r);
+  }
+}
+
+/** Close out a record exactly once: unlink + stop any stolen source. */
+function finishVoice(r) {
+  if (r.done) return;
+  r.done = true;
+  const idx = voiceReg.indexOf(r);
+  if (idx >= 0) voiceReg.splice(idx, 1);
+  voices = Math.max(0, voices - 1);
+  if (r.src && r.stolen) {
+    // Stolen mid-flight: detach onended first so the natural stop doesn't
+    // re-enter accounting, then hard-stop the source.
+    try { r.src.onended = null; } catch (_e) { /* node already gone */ }
+    try { r.src.stop(); } catch (_e) { /* already stopped */ }
+  }
+}
+
+/**
+ * Reserve a voice slot. Returns a record or null when denied (global cap hit,
+ * or the category is saturated and every live voice outranks `prio`).
+ * `src` may be attached later via grant.src = ... by the caller.
+ */
+function acquireVoice(cat, prio, dur) {
+  pruneVoices();
+  if (voices >= MAX_VOICES) return null;
+  const cap = VOICE_CAPS[cat] != null ? VOICE_CAPS[cat] : MAX_VOICES;
+  let used = 0;
+  for (const r of voiceReg) if (r.cat === cat) used++;
+  if (used >= cap) {
+    // steal-oldest-lowest-priority within this category only
+    let victim = null;
+    for (const r of voiceReg) {
+      if (r.cat !== cat || r.done) continue;
+      if (r.prio < prio && (!victim || r.prio < victim.prio ||
+          (r.prio === victim.prio && r.t0 < victim.t0))) victim = r;
+    }
+    if (!victim) return null;
+    voicesStolen++;
+    victim.stolen = true; // finishVoice hard-stops stolen sources
+    finishVoice(victim);
+  }
+  const rec = {
+    cat, prio, t0: ctx.currentTime,
+    end: ctx.currentTime + Math.max(0.05, dur || 0.5),
+    src: null, stolen: false, done: false,
+  };
+  voiceReg.push(rec);
+  voices++;
+  return rec;
+}
+
+/** Release a granted slot early (natural end or failed synth). */
+function releaseVoiceRec(rec) {
+  if (!rec) return;
+  rec.stolen = false; // natural release: don't hard-stop the source
+  finishVoice(rec);
+}
+
+/** Register an ambient tone batch (no single src node; time-expiring only). */
+function ambienceVoice(dur, prio) {
+  return acquireVoice('ambience', prio != null ? prio : DEFAULT_PRIO.ambience, dur);
+}
+
+/** Play a named one-shot. No-op before initAudio(); capped at MAX_VOICES and
+ *  per-category voice caps (steal-oldest-lowest-priority); payload opts.pos
+ *  attenuates volume by distance to G.player.pos and pans the voice through an
+ *  equalpower PannerNode placed at that world position; opts.priority (0..9)
+ *  protects the voice from category stealing. Sample-bank aware: a registered
+ *  buffer with the synth's name plays instead of the synth (Wave I fallback
+ *  path; the bank starts empty so behavior is synthesized-only until an asset
+ *  pipeline calls setSampleBank). Machine voices get per-type pitch/filter
+ *  identity shaping derived from the nearest machine to opts.pos. */
 export function sfx(name, opts = {}) {
   if (!ctx) return;
   const fn = SYNTHS[name];
   if (!fn) return;
+  pruneVoices();
   if (voices >= MAX_VOICES) return;
+  const cat = SFX_CATEGORY[name] || 'combat';
+  const prio = opts.priority != null ? clamp(opts.priority, 0, 9) : DEFAULT_PRIO[cat];
   const attn = posAttenuation(opts.pos);
   if (attn <= 0.02) return; // out of earshot
-  voices++;
+  const grant = acquireVoice(cat, prio, SYNTH_DUR[name]);
+  if (!grant) return; // category saturated and nothing stealable
   // positional one-shots: manual attn stays authoritative, so the panner's own
   // distance model is neutralized (rolloff 0 => pure stereo panning)
   let panner = null;
@@ -822,24 +1249,35 @@ export function sfx(name, opts = {}) {
       voiceOpts = opts;
     }
   }
+  // machine identity shaping: nearest machine wins; scale helper pitches and
+  // add a character layer while the base synth runs (synchronous window, so a
+  // module-level pitch scalar cannot interleave with other calls)
+  const idn = MACHINE_VOICES.has(name) ? machineIdentityFor(opts.pos) : null;
+  if (idn && idn.pitch !== 1) _pitchScale = idn.pitch;
   let src = null;
   try {
-    src = fn(voiceOpts, attn);
+    src = playSampleOrSynth(name, fn, voiceOpts, attn);
   } catch (err) {
-    // audio must never break gameplay
+    src = null; // audio must never break gameplay
+  } finally {
+    if (idn && idn.pitch !== 1) _pitchScale = 1;
   }
+  if (src && idn) {
+    try { playIdentityLayer(idn, name, voiceOpts, attn); } catch (_err) { /* cosmetic layer */ }
+  }
+  grant.src = src;
   if (src) {
     src.onended = () => {
       if (panner) {
         try { panner.disconnect(); } catch (_err) { /* already gone */ }
       }
-      releaseVoice();
+      releaseVoiceRec(grant);
     };
   } else {
     if (panner) {
       try { panner.disconnect(); } catch (_err) { /* already gone */ }
     }
-    releaseVoice();
+    releaseVoiceRec(grant);
   }
 }
 
@@ -863,18 +1301,44 @@ export function updateAudio(_dt) {
     padOscFifth.frequency.setTargetAtTime(fifth, t, 2.5);
   }
 
-  // v2: listener follows the player so positional one-shots pan correctly
+  // v2: listener follows the player so positional one-shots pan correctly.
+  // Wave I: emitters.js then refines ORIENTATION from G.camera when present
+  // (see updateEmitters — position stays on the stable player-feet baseline).
   updateListener();
+  updateEmitters(_dt);
 
-  // v2: threat-driven music crossfade (calm pad / explore / combat)
+  // Wave I adaptive escalation: calm -> tense -> combat (+ boss override) with
+  // hysteresis, so a threat signal flickering near a threshold can no longer
+  // stutter the layer gains every frame. Enter combat at threat >= 0.55 and
+  // fall back to tense only at <= 0.35; tense brackets calm at 0.18/0.10.
   const active = G.started && !G.paused && !G.gameOver;
   const threat = clamp(G.threat || 0, 0, 1);
-  const calmT = (1 - threat) * 1.5; // >1 base offsets the quieter music bus
-  const expT = smoothstep(0.15, 0.3, threat) * (1 - smoothstep(0.6, 0.85, threat));
-  const comT = active ? smoothstep(0.5, 0.8, threat) : 0; // duck drone on pause/death
+  if (!active) {
+    combatTier = 'calm'; // pause/death resets escalation; gains duck below anyway
+  } else if (G.bossNear) {
+    combatTier = 'boss';
+  } else if (combatTier === 'calm' && threat >= 0.18) {
+    combatTier = 'tense';
+  } else if (combatTier === 'tense' && threat >= 0.55) {
+    combatTier = 'combat';
+  } else if (combatTier === 'tense' && threat <= 0.1) {
+    combatTier = 'calm';
+  } else if (combatTier === 'combat' && threat <= 0.35) {
+    combatTier = 'tense';
+  } else if (combatTier === 'boss' && !G.bossNear) {
+    combatTier = threat >= 0.55 ? 'combat' : 'tense';
+  }
+  const inCombat = combatTier === 'combat' || combatTier === 'boss';
+
+  // v2: threat-driven music crossfade (calm pad / explore / combat), now tiered.
+  // The old continuous curves were already smooth, so only the combat layer's
+  // abrupt threshold crossing needed smoothing — done via the slower glide tc.
+  const calmT = (1 - threat) * 1.5 * (inCombat ? 0.45 : 1); // duck pad under pulses
+  const expT = inCombat ? 0 : smoothstep(0.15, 0.3, threat) * (1 - smoothstep(0.6, 0.85, threat));
+  const comT = active && inCombat ? 1 : 0;
   if (Math.abs(calmT - lastCalmT) > 0.01) { lastCalmT = calmT; glideGain(calmGain, calmT, 0.6); }
   if (Math.abs(expT - lastExpT) > 0.01) { lastExpT = expT; glideGain(exploreGain, expT, 0.6); }
-  if (Math.abs(comT - lastComT) > 0.01) { lastComT = comT; glideGain(combatGain, comT, 0.6); }
+  if (Math.abs(comT - lastComT) > 0.01) { lastComT = comT; glideGain(combatGain, comT, 0.9); }
 
   // explore plucks / combat pulses: lookahead-scheduled only while audible
   if (active && exploreGain && exploreGain.gain.value > 0.02) {
@@ -918,6 +1382,17 @@ export function updateAudio(_dt) {
     const rainy = w.type === 'rain' || w.type === 'storm';
     const rainT = rainy ? clamp(w.intensity, 0, 1) * 0.16 : 0;
     if (Math.abs(rainT - lastRainT) > 0.004) { lastRainT = rainT; glideGain(rainGain, rainT, 0.5); }
+    // Wave I: intensity-linked crossfades only from here down — every change
+    // rides setTargetAtTime so weather transitions never click or jump.
+    // Rain brightness opens up with intensity (his -> downpour sheet).
+    if (rainLPF) {
+      rainLPF.frequency.setTargetAtTime(lerp(4500, 7500, clamp(w.intensity, 0, 1)), t, 0.8);
+    }
+    // Storm sub-rumble bed fades with storm intensity, out when not stormy.
+    if (stormGain) {
+      const stormT = w.type === 'storm' ? clamp(w.intensity, 0, 1) * 0.055 : 0;
+      if (Math.abs(stormT - lastStormT) > 0.004) { lastStormT = stormT; glideGain(stormGain, stormT, 1.2); }
+    }
     // Wind loudness tracks the live weather wind + gust field (the LFO wired
     // to this param at init only adds a small idle wobble on top).
     if (windGain) {
@@ -943,6 +1418,49 @@ export function updateAudio(_dt) {
   if (daylight < 0.2 && t >= nextCricketAt) {
     crickets(t + 0.05);
     nextCricketAt = t + 1.3 + Math.random() * 1.2;
+  }
+
+  // Wave I: surface-aware footsteps — distance-accumulator stride driver over
+  // the player's horizontal motion. The player controller may ALSO emit the
+  // 'footstep' bus event; when those arrive we back off for 0.45s so steps
+  // never double up (event-driven wins, self-driver stays as fallback).
+  const pStep = G.player;
+  if (active && pStep && pStep.pos && !pStep.dead) {
+    const dx = pStep.pos.x - lastStepX;
+    const dz = pStep.pos.z - lastStepZ;
+    lastStepX = pStep.pos.x;
+    lastStepZ = pStep.pos.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    if (dist < 3) stepAccum += dist; // >3m/frame is a teleport, not a stride
+    const running = !!pStep.sprinting;
+    const strideLen = running ? 2.6 : 2.0; // walk ~6u/s -> ~3 steps/s
+    if (stepAccum >= strideLen && t - lastBusStepAt > 0.45) {
+      stepAccum = 0;
+      playFootstep(running);
+    }
+  } else {
+    stepAccum = 0;
+    lastStepX = pStep && pStep.pos ? pStep.pos.x : lastStepX;
+    lastStepZ = pStep && pStep.pos ? pStep.pos.z : lastStepZ;
+  }
+
+  // Wave I: damaged-machine metal-stress beds — periodic positional creaks per
+  // tracked machine ('machineDamaged' registers; heal/death/disposal detaches).
+  // Poll-based detach because machines expose no 'healed' event.
+  if (active && stressBeds.size) {
+    for (const [m, nextAt] of stressBeds) {
+      const gone = !m || !m.group || !m.alive || !m.group.parent ||
+        (typeof m.maxHp === 'number' && m.hp >= m.maxHp);
+      if (gone) { stressBeds.delete(m); continue; }
+      if (t < nextAt) continue;
+      const frac = m.maxHp > 0 ? clamp(1 - m.hp / m.maxHp, 0, 1) : 0.5;
+      sfx('stressCreak', {
+        pos: m.group.position,
+        priority: 2,
+        vol: clamp(0.04 + frac * 0.09, 0.02, 0.16),
+      });
+      stressBeds.set(m, t + 2.2 + Math.random() * 2.6);
+    }
   }
 
   // heartbeat while hp < 25% (two low thumps per second)
@@ -989,6 +1507,40 @@ bus.on('pickup', (p) => sfx('pickup', { type: p ? p.type : null }));
 bus.on('craft', () => sfx('craft'));
 bus.on('skillUp', () => sfx('skillUp'));
 
+// Wave I contract events -----------------------------------------------------
+
+// Impact categories: material-appropriate knock/thud/splash layered onto the
+// existing hit sounds (combat FX emits 'impact' alongside 'machineHit').
+const IMPACT_SYNTHS = {
+  metal: 'impactMetal', stone: 'impactStone', soil: 'impactSoil',
+  wood: 'impactWood', water: 'impactWater',
+};
+bus.on('impact', (p) => {
+  if (!p) return;
+  const name = IMPACT_SYNTHS[p.material];
+  if (!name) return;
+  sfx(name, { pos: p.pos || null, strength: typeof p.strength === 'number' ? p.strength : 1 });
+});
+
+// Damaged-machine tracking for the positional metal-stress bed. Detach happens
+// in updateAudio (heal/death/disposal) since machines expose no healed event.
+bus.on('machineDamaged', (p) => {
+  const m = p && p.machine;
+  if (!m || !m.group) return;
+  if (!stressBeds.has(m) && stressBeds.size >= 6) {
+    stressBeds.delete(stressBeds.keys().next().value); // evict oldest tracked
+  }
+  stressBeds.set(m, ctx ? ctx.currentTime + 0.6 : 0); // first creak shortly after
+});
+
+// Controller-driven footsteps (contract event, no pos: it IS the player).
+// Timestamp suppresses the local stride driver so steps never double up.
+bus.on('footstep', (p) => {
+  lastBusStepAt = ctx ? ctx.currentTime : 0;
+  const surf = p && p.surface ? STEP_SYNTHS[p.surface] : null;
+  sfx(surf || 'stepSoil', { running: !!(p && p.running) });
+});
+
 // v3: victory sting on kill streaks of 3+, spear melee whoosh/thud, level fanfare
 bus.on('killStreak', (p) => {
   if (p && p.count >= 3) sfx('victorySting');
@@ -1014,6 +1566,37 @@ bus.on('settingsChanged', (p) => {
   else if (p.key === 'music') glideGain(musicIn, 0.9 * v, 0.03);
   else if (p.key === 'sfx') glideGain(sfxGain, v, 0.03);
 });
+
+// ------------------------------------------------------------ Wave I public --
+
+/** Place a synthesized voice at a world position through the shared PannerNode
+ *  pool (see emitters.js). synthFn receives { dest, pos, category, priority }
+ *  and must return its longest-lived source node (or null). opts: {priority,
+ *  ttl}. Returns the source node, or null before initAudio()/when saturated. */
+export function emitAt(pos, category, synthFn, opts = {}) {
+  return emitterEmitAt(pos, category, synthFn, opts);
+}
+
+/** Perf-HUD voice diagnostics: global + per-category occupancy vs caps,
+ *  cumulative steals, and nested emitter-pool stats. */
+export function getVoiceStats() {
+  pruneVoices();
+  const byCategory = { ambience: 0, machine: 0, combat: 0, ui: 0 };
+  for (const r of voiceReg) if (byCategory[r.cat] != null) byCategory[r.cat]++;
+  return {
+    total: voices,
+    max: MAX_VOICES,
+    caps: Object.assign({}, VOICE_CAPS),
+    byCategory,
+    stolen: voicesStolen,
+    emitters: getEmitterStats(),
+    ready: !!ctx,
+  };
+}
+
+// Perf HUD contract: publish the getter itself. Absence of window (tests/SSR)
+// is tolerated everywhere — nothing may assume this property exists.
+if (typeof window !== 'undefined') window.__IW_AUDIO_STATS = getVoiceStats;
 
 // unlock hooks: browsers refuse to start an AudioContext created before a real
 // user gesture, so the first pointerdown/keydown flips `unlocked` and builds
