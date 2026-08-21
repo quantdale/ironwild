@@ -29,7 +29,8 @@ export const CELL_SIZE = 60;      // grid pitch; keep in sync with groupInstance
 const ACTIVE_CELLS = 2;           // activate within 2 cells of the player ...
 const DEACT_CELLS = 2.6;          // ... and hide again past 2.6 (hysteresis, no thrash)
 const APPROACH_CELLS = 3;         // prefetch ring: fire onCellApproaching once per entry
-const RETIRE_CELLS = 5;           // guidance for explicit retire() calls by owners
+/** Guidance for explicit retire() calls by owners (disposable content only). */
+export const RETIRE_CELLS = 5;
 
 const ACTIVE_DIST = ACTIVE_CELLS * CELL_SIZE;
 const DEACT_DIST = DEACT_CELLS * CELL_SIZE;

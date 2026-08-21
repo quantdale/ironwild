@@ -1257,8 +1257,8 @@ export function sfx(name, opts = {}) {
   let src = null;
   try {
     src = playSampleOrSynth(name, fn, voiceOpts, attn);
-  } catch (err) {
-    src = null; // audio must never break gameplay
+  } catch (_err) {
+    // audio must never break gameplay; src stays null (its init value)
   } finally {
     if (idn && idn.pitch !== 1) _pitchScale = 1;
   }

@@ -750,7 +750,7 @@ function tickMachine(m, dt) {
   if (ai.atk !== 'lunge') moveGround(m); // lunge manages its own arc height
 }
 
-function patrolTick(m, dt, dist) {
+function patrolTick(m, dt, _dist) { // _dist: caller-computed range kept in the tick API for future range gates
   const ai = m._ai;
   // v5: blackboard-gated escalation. Bramblehorn keeps its legacy
   // never-initiates exemption for both the aggro read and seek hints.
@@ -795,7 +795,7 @@ function patrolTick(m, dt, dist) {
   }
 }
 
-function suspiciousTick(m, dt, dist) {
+function suspiciousTick(m, dt, _dist) {
   const ai = m._ai;
   // v5: blackboard-gated escalation (same exemption as patrolTick).
   if (m.type !== 'bramblehorn' && perceptionSighted(m)) {

@@ -150,7 +150,10 @@ function releaseSlot(pool, i) {
 
 /** Grab a slot: prefer an inactive one (rotating scan), else steal the
  *  lowest-priority most-progressed live slot - old low-stakes FX yield to new
- *  feedback instead of the newest effect being silently dropped. */
+ *  feedback instead of the newest effect being silently dropped. A spawn whose
+ *  own priority is BELOW the best available victim's refuses to steal: a dust
+ *  puff must never evict a weak-point break mid-burst. Returns -1 when no
+ *  slot may be taken; callers break their emission loop on that. */
 function acquireSlot(pool, priority) {
   const cap = pool.cap;
   for (let i = 0; i < cap; i++) {
@@ -171,6 +174,7 @@ function acquireSlot(pool, priority) {
     if (score < worstScore) { worstScore = score; worst = i; }
   }
   if (worst < 0) return -1; // unreachable (cap > 0), kept as a guard
+  if ((priority || 0) < pool.pri[worst]) return -1; // never punch down
   releaseSlot(pool, worst);
   pool.active[worst] = 1;
   pool.count++;

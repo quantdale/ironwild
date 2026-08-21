@@ -18,7 +18,7 @@ import { bus } from '../core/events.js';
 import { Input } from '../core/input.js';
 import { clamp, lerp } from '../core/utils.js';
 import { sfx } from '../audio/audio.js';
-import { componentRule, checkDamageTiers } from './damage.js';
+import { componentRule, checkDamageTiers } from '../combat/damage.js';
 
 // Tuning (ARCHITECTURE_V3.md row melee-spear).
 const MELEE_RANGE = 2.4;                          // sphere-center reach

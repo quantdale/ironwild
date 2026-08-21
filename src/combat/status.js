@@ -216,7 +216,9 @@ export function updateStatusFX(dt) {
         if (desc.tick(m) === false) ended = true; // descriptor dropped it early
       }
       if (ended || !m.alive || st.t <= 0) { // killed mid-tick or ran out: drop state now, not next pass
-        st.t = Math.max(0, st.t);
+        // Full clearance in the same pass: a dead/ended holder must not carry
+        // residual timer state into the frame before the corpse sweep runs.
+        st.t = 0;
         st.acc = 0;
         if (desc.expire) desc.expire(m);
       } else if (desc.sustain) {

@@ -54,7 +54,7 @@ export function createEmitters({ ctx, destination } = {}) {
       panner = makePoolPanner(ctx);
       panner.connect(destination);
     } catch (_err) {
-      panner = null; // leave the slot dead rather than crash boot
+      // leave the slot dead rather than crash boot (panner stays null)
     }
     pool.push({ panner, busy: false, until: 0, prio: 0, src: null });
   }

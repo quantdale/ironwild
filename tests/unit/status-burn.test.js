@@ -43,6 +43,16 @@ function makeMachine({ hp = 100, alive = true, hitImpl } = {}) {
   return m;
 }
 
+/**
+ * Wave F moved per-machine burn state from the flat fields `m.burnT`/`m.burnAcc`
+ * into the status registry's store: `m._stat.burn = { t, acc }`. These accessors
+ * keep every assertion pointed at the same semantic quantity under the new
+ * storage (null = no state was ever created; t=0 record = expired but applied).
+ */
+function burnState(m) {
+  return (m._stat && m._stat.burn) || null;
+}
+
 describe('applyBurn validation (scene-less)', () => {
   beforeEach(() => vi.resetModules());
 
@@ -56,7 +66,7 @@ describe('applyBurn validation (scene-less)', () => {
     const { applyBurn } = await loadFresh();
     const m = makeMachine({ alive: false });
     expect(applyBurn(m)).toBe(false);
-    expect(m.burnT).toBeUndefined();
+    expect(burnState(m)).toBeNull();
     expect(m.panic).toBeUndefined();
   });
 
@@ -64,7 +74,7 @@ describe('applyBurn validation (scene-less)', () => {
     const { applyBurn } = await loadFresh();
     const m = { alive: true }; // no hit()
     expect(applyBurn(m)).toBe(false);
-    expect(m.burnT).toBeUndefined();
+    expect(burnState(m)).toBeNull();
   });
 
   it('ignores negative/zero custom durations and falls back to the default', async () => {
@@ -72,7 +82,7 @@ describe('applyBurn validation (scene-less)', () => {
     for (const seconds of [0, -1, -0.001]) {
       const m = makeMachine();
       expect(applyBurn(m, seconds)).toBe(true);
-      expect(m.burnT).toBe(BURN_DURATION);
+      expect(burnState(m).t).toBe(BURN_DURATION);
     }
   });
 
@@ -80,8 +90,8 @@ describe('applyBurn validation (scene-less)', () => {
     const { applyBurn } = await loadFresh();
     const m = makeMachine();
     expect(applyBurn(m, 2.5)).toBe(true);
-    expect(m.burnT).toBe(2.5);
-    expect(m.burnAcc).toBe(0);
+    expect(burnState(m).t).toBe(2.5);
+    expect(burnState(m).acc).toBe(0);
   });
 
   it('sets the panic flag for the AI flee behavior on application', async () => {
@@ -111,7 +121,7 @@ describe('burn ticking (scene-less)', () => {
 
     updateStatusFX(TICK_INTERVAL / 2); // accumulates to the next full interval
     expect(m.hitCalls).toHaveLength(2);
-    expect(m.burnAcc).toBeCloseTo(0, 10);
+    expect(burnState(m).acc).toBeCloseTo(0, 10);
   });
 
   it('a long frame yields floor(dt / interval) ticks while burn remains', async () => {
@@ -121,7 +131,7 @@ describe('burn ticking (scene-less)', () => {
     applyBurn(m); // burnT = 4
     updateStatusFX(3); // burnT -> 1, acc 3.0 -> 6 ticks
     expect(m.hitCalls).toHaveLength(6);
-    expect(m.burnT).toBeCloseTo(1, 10);
+    expect(burnState(m).t).toBeCloseTo(1, 10);
     expect(m.panicT).toBeCloseTo(1, 10);
     expect(m.panic).toBe(true);
   });
@@ -132,9 +142,9 @@ describe('burn ticking (scene-less)', () => {
     G.machines = [m];
     applyBurn(m);
     updateStatusFX(1); // burnT 4 -> 3, exactly two ticks consumed
-    expect(m.burnT).toBeCloseTo(3, 10);
+    expect(burnState(m).t).toBeCloseTo(3, 10);
     applyBurn(m); // refreshed
-    expect(m.burnT).toBe(BURN_DURATION);
+    expect(burnState(m).t).toBe(BURN_DURATION);
     updateStatusFX(TICK_INTERVAL);
     expect(m.hitCalls).toHaveLength(3); // 2 from the first second + 1 now
   });
@@ -146,9 +156,9 @@ describe('burn ticking (scene-less)', () => {
     applyBurn(m);
     updateStatusFX(0.75); // one tick fires, 0.25s carried toward the next
     expect(m.hitCalls).toHaveLength(1);
-    expect(m.burnAcc).toBeCloseTo(0.25, 10);
+    expect(burnState(m).acc).toBeCloseTo(0.25, 10);
     applyBurn(m); // refreshed: cadence restarts from zero
-    expect(m.burnAcc).toBe(0);
+    expect(burnState(m).acc).toBe(0);
     updateStatusFX(0.25); // stale carry would fire here; correct cadence does not
     expect(m.hitCalls).toHaveLength(1);
     updateStatusFX(0.25); // a full interval has now elapsed since the refresh
@@ -164,7 +174,7 @@ describe('burn ticking (scene-less)', () => {
     expect(m.hitCalls).toHaveLength(1);
     updateStatusFX(TICK_INTERVAL); // last 0.5s is a full elapsed interval: one more tick
     expect(m.hitCalls).toHaveLength(2);
-    expect(m.burnT).toBe(0);
+    expect(burnState(m).t).toBe(0);
     expect(m.panicT).toBe(0);
     expect(m.panic).toBe(false);
   });
@@ -176,7 +186,7 @@ describe('burn ticking (scene-less)', () => {
     G.machines = [m];
     updateStatusFX(2);
     expect(m.hitCalls).toHaveLength(0);
-    expect(m.burnT).toBeUndefined();
+    expect(burnState(m)).toBeNull();
   });
 
   it('machines burn independently of unburnt neighbors', async () => {
@@ -198,7 +208,7 @@ describe('burn ticking (scene-less)', () => {
     applyBurn(m);
     for (const dt of [0, -0.016]) {
       expect(() => updateStatusFX(dt)).not.toThrow();
-      expect(m.burnT).toBe(BURN_DURATION);
+      expect(burnState(m).t).toBe(BURN_DURATION);
       expect(m.hitCalls).toHaveLength(0);
     }
   });
@@ -210,7 +220,7 @@ describe('burn ticking (scene-less)', () => {
     applyBurn(m);
     updateStatusFX(1);
     expect(m.hitCalls).toHaveLength(2); // attempts were made...
-    expect(m.burnT).toBeCloseTo(3, 10); // ...and time still elapsed
+    expect(burnState(m).t).toBeCloseTo(3, 10); // ...and time still elapsed
     expect(m.panic).toBe(true);
   });
 });
@@ -229,7 +239,7 @@ describe('death during burn (kill-once interplay)', () => {
     expect(m.hitCalls).toHaveLength(2); // no third tick attempted
     expect(m.panic).toBe(false);
     // Burn state is cleared in the same death path, not the next update pass.
-    expect(m.burnT).toBe(0);
+    expect(burnState(m).t).toBe(0);
     expect(m.panicT).toBe(0);
   });
 
@@ -242,7 +252,7 @@ describe('death during burn (kill-once interplay)', () => {
     updateStatusFX(TICK_INTERVAL);
     expect(m.alive).toBe(false);
     updateStatusFX(0.016); // corpse cleanup pass
-    expect(m.burnT).toBe(0);
+    expect(burnState(m).t).toBe(0);
     expect(m.panicT).toBe(0);
     expect(m.panic).toBe(false);
     const callsAfterDeath = m.hitCalls.length;
@@ -311,7 +321,7 @@ describe('tick-number FX pool (canvas path)', () => {
     applyBurn(m);
     updateStatusFX(TICK_INTERVAL); // spawn one number
     expect(G.scene.children.filter((c) => c.visible)).toHaveLength(1);
-    m.burnT = 0; // stop burning so no new numbers spawn
+    m._stat.burn.t = 0; // stop burning so no new numbers spawn
     updateStatusFX(0.75); // past TICK_DUR
     expect(G.scene.children.filter((c) => c.visible)).toHaveLength(0);
   });
