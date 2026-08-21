@@ -8,6 +8,9 @@ export default defineConfig({
   testDir: './tests/e2e',
   timeout: 60_000,
   retries: process.env.CI ? 1 : 0,
+  // One worker: every spec drives a full WebGL game instance; parallel
+  // browser launches starve each other's main thread under SwiftShader.
+  workers: 1,
   // HTML report (written to playwright-report/, never auto-opened) gives CI a
   // failure artifact; list keeps local runs readable.
   reporter: [['list'], ['html', { open: 'never' }]],

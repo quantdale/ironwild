@@ -44,7 +44,7 @@ grow your skills. Death is permanent per run — restart and try again.
 | Ctrl | Dodge roll (i-frames, costs stamina) |
 | C | Crouch / sneak (concealed in tall grass) |
 | F | Spear quick-melee (short-range swing, no ammo cost) |
-| X | Toggle standard / fire arrows |
+| X / Mouse Wheel | Toggle standard / fire arrows |
 | E | Collect · interact · harvest (hold) |
 | Q (hold) | Focus scan — slow motion, reveals machines & weak points through terrain |
 | H | Use medicine (+45 HP) |
@@ -98,7 +98,8 @@ Arrows fly on a real ballistic arc — lead your targets and aim above for dista
 - **Accessibility**: a colorblind-safe weak-point cue (settings) draws a small pulsing
   white-on-black reticle over every unbroken weak point in range, all the time — not just
   during a focus scan, and independent of the glow color.
-- **Save system**: autosave + P quicksave; Continue from the title screen. XP/level and the
+- **Save system**: autosave + P quicksave; Continue or NEW RUN (wipes the save) from the
+  title screen. XP/level and the
   bestiary persist too; saves from earlier versions still load (missing fields default fresh).
 - **Settings**: volume sliders, mouse sensitivity, invert-Y, quality preset, difficulty,
   colorblind cue (all persisted).

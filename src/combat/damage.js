@@ -138,9 +138,9 @@ function spawnSparks(pos, power, colorHex, size, dur = SPARK_DUR) {
     if (!c.active) { s = c; sparkCursor = (sparkCursor + i + 1) % SPARK_POOL; break; }
   }
   if (!s) {
-    // all busy: steal the oldest burst
+    // all busy: steal the oldest burst (smallest t = spawned longest ago)
     s = sparks[0];
-    for (let i = 1; i < SPARK_POOL; i++) if (sparks[i].t > s.t) s = sparks[i];
+    for (let i = 1; i < SPARK_POOL; i++) if (sparks[i].t < s.t) s = sparks[i];
   }
   s.active = true;
   s.t = 0;

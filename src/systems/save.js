@@ -72,10 +72,11 @@ export function saveGame(manual = false) {
 }
 
 /**
- * Restore pos/hp/stamina/inventory/skills/timeOfDay/mapRevealed/quests from
- * localStorage onto G. Machines are left alone - the world respawns fresh.
- * Re-emits 'questUpdate' per restored slot so live UI (tracker/minimap)
- * refreshes. Returns true on success, false on missing/corrupt data.
+ * Restore pos/hp/stamina/inventory/skills/timeOfDay/mapRevealed/quests plus
+ * xp/level and bestiary state from localStorage onto G. Machines are left
+ * alone - the world respawns fresh. Re-emits 'questUpdate' per restored slot
+ * so live UI (tracker/minimap) refreshes. Returns true on success, false on
+ * missing/corrupt data.
  */
 export function loadGame() {
   let data = null;
