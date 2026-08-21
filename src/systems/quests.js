@@ -29,15 +29,23 @@ const REWARDS = {
 let inited = false;
 let rng = null;
 let nextId = 1;
-let genCount = 0;    // contracts generated so far (first three: one of each type)
+// Contracts generated so far lives on G.quests.genCount (defaulted in
+// createQuests) so systems/save.js can persist it alongside the slots -
+// otherwise Continue would replay the forced opening trio every session.
 let els = null;      // { root, slots:[{el,icon,name,count,fill, caches...}] }
 let shown = false;
 
 // ---------------------------------------------------------------- creation --
 
+/** True while at least one scannable Vantage exists in the world. */
+function hasLiveVantage() {
+  return G.machines.some((m) => m.type === 'vantage' && m.alive);
+}
+
 /** Draw one fresh contract from the deterministic stream. Pure data record.
- *  The first three ever generated are forced to one of each type so the
- *  opening hour showcases every contract kind; later ones roll freely. */
+ *  The first three of a run are forced to one of each type so the opening
+ *  hour showcases every contract kind; later ones roll freely. genCount
+ *  persists through saves, so "first three" really means the first three. */
 function makeQuest() {
   const q = {
     id: nextId++,
@@ -51,16 +59,22 @@ function makeQuest() {
     done: false,
     refillT: 0,
   };
-  const forced = genCount < 3 ? ['hunt', 'gather', 'scanVantage'][genCount] : null;
-  const roll = forced ? -1 : rng();
-  genCount++;
-  if (forced === 'hunt' || (!forced && roll < 0.45)) {
+  // scanVantage needs a live Vantage; the world spawns exactly one and it
+  // never respawns (ai.js drops it from the respawn queue), so once it is
+  // dead any scan draw - forced or rolled - falls through to gather instead
+  // of dealing a contract that can never complete.
+  const canScan = hasLiveVantage();
+  const forced = G.quests.genCount < 3 ? ['hunt', 'gather', 'scanVantage'][G.quests.genCount] : null;
+  const effForced = forced === 'scanVantage' && !canScan ? 'gather' : forced;
+  const roll = effForced ? -1 : rng();
+  G.quests.genCount++;
+  if (effForced === 'hunt' || (!effForced && roll < 0.45)) {
     q.type = 'hunt';
     q.target = HUNT_TYPES[Math.floor(rng() * HUNT_TYPES.length)];
     q.targetName = MACHINE_NAMES[q.target];
     q.need = Math.floor(randRange(rng, 2, 5)); // 2..4
     q.title = `Hunt ${q.need} \u00D7 ${q.targetName}`;
-  } else if (forced === 'gather' || (!forced && roll < 0.85)) {
+  } else if (effForced === 'gather' || (!effForced && (roll < 0.85 || !canScan))) {
     q.type = 'gather';
     q.target = GATHER_TYPES[Math.floor(rng() * GATHER_TYPES.length)];
     q.targetName = q.target;
@@ -238,6 +252,17 @@ function injectStyles() {
 // ---------------------------------------------------------------- public ----
 
 /**
+ * Shape check for records restored from a save (systems/save.js): an unknown
+ * type or non-finite number would wedge the slot (a NaN refillT never
+ * elapses), so invalid records are dropped and re-dealt instead.
+ */
+export function isValidQuest(q) {
+  if (!q || typeof q !== 'object' || !REWARDS[q.type]) return false;
+  return Number.isFinite(q.progress) && Number.isFinite(q.need) && q.need > 0 &&
+    Number.isFinite(q.refillT);
+}
+
+/**
  * Build the tracker and fill every empty slot with a fresh contract
  * (slots restored earlier by loadGame are kept). Subscribes progress events.
  */
@@ -245,6 +270,8 @@ export function createQuests() {
   if (inited) return;
   inited = true;
   rng = makeRng((CONFIG.seed + 4242) >>> 0);
+  // Restored by loadGame for saved runs; fresh boots start the stream at 0.
+  if (!Number.isFinite(G.quests.genCount)) G.quests.genCount = 0;
   injectStyles();
   buildDom();
 
@@ -264,6 +291,13 @@ export function createQuests() {
   });
 }
 
+/** Deal a fresh contract into slot i and announce it. */
+function replaceSlot(i) {
+  const nq = makeQuest();
+  G.quests.slots[i] = nq;
+  bus.emit('questUpdate', { quest: nq });
+}
+
 /**
  * Per-frame (scaled dt): tracker visibility + refill timers for completed
  * slots. DOM updates are event-driven; this only ages timers.
@@ -281,12 +315,15 @@ export function updateQuests(dt) {
 
   for (let i = 0; i < 3; i++) {
     const q = G.quests.slots[i];
-    if (!q || !q.done) continue;
-    q.refillT -= dt;
-    if (q.refillT <= 0) {
-      const nq = makeQuest();
-      G.quests.slots[i] = nq;
-      bus.emit('questUpdate', { quest: nq });
+    if (!q) {
+      replaceSlot(i); // dropped by load-time validation -> deal a replacement
+    } else if (!q.done) {
+      // An open scan contract outlives its Vantage only as a deadlock (the
+      // single world Vantage never respawns) - swap it for a fresh roll.
+      if (q.type === 'scanVantage' && !hasLiveVantage()) replaceSlot(i);
+    } else {
+      q.refillT -= dt;
+      if (q.refillT <= 0) replaceSlot(i);
     }
   }
 }

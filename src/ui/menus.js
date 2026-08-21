@@ -71,6 +71,15 @@ export function createMenus() {
   // Single lock-change slot (per Input contract) - menus own it.
   Input.onLockChange(onLockChange);
 
+  // A rejected relock fires pointerlockerror during Chromium's ~1s post-Esc
+  // cooldown; stretch the grace so the fallback auto-pause doesn't flash the
+  // pause screen back while the retry settles.
+  document.addEventListener('pointerlockerror', () => {
+    if (G.started && !G.gameOver) {
+      graceUntil = Math.max(graceUntil, performance.now() + 1500);
+    }
+  });
+
   bus.on('playerDied', onPlayerDied);
 }
 
@@ -95,11 +104,13 @@ export function updateMenus() {
   if (Input.pressed('Escape')) {
     if (activePanel === 'inventory' || activePanel === 'skills' || activePanel === 'bestiary') closePanel();
     else if (activePanel === 'pause') resume();
+    else if (Input.lockBroken) showPause(); // no lock to lose - Esc must reach pause manually
   }
 
   // Fallback: pointer lost without a lock-change callback (missed event,
-  // OS-level focus steal). Only after the relock grace window has passed.
-  if (!Input.locked && activePanel === null && performance.now() > graceUntil) {
+  // OS-level focus steal). Only after the relock grace window has passed;
+  // skipped once Input.lockBroken falls back to free-cursor look.
+  if (!Input.locked && !Input.lockBroken && activePanel === null && performance.now() > graceUntil) {
     showPause();
   }
 }
@@ -120,7 +131,7 @@ function startGame() {
 function beginGame() {
   G.started = true;
   els.start.classList.add('hidden');
-  graceUntil = performance.now() + 900;
+  graceUntil = performance.now() + 1500;
   Input.lockPointer(getCanvas());
   bus.emit('ui', { action: 'start' });
 }
@@ -152,6 +163,7 @@ function showPause() {
   activePanel = 'pause';
   G.paused = true;
   els.pause.classList.remove('hidden');
+  bus.emit('ui', { action: 'pause' });
 }
 
 function hidePause() {
@@ -164,7 +176,7 @@ function hidePause() {
 function resume() {
   if (activePanel !== 'pause') return;
   hidePause();
-  graceUntil = performance.now() + 900;
+  graceUntil = performance.now() + 1500;
   Input.lockPointer(getCanvas());
   bus.emit('ui', { action: 'resume' });
 }
@@ -187,7 +199,7 @@ function closePanel() {
   els[name].classList.add('hidden');
   activePanel = null;
   G.paused = false;
-  graceUntil = performance.now() + 900;
+  graceUntil = performance.now() + 1500;
   Input.lockPointer(getCanvas());
   bus.emit('ui', { action: 'close' });
 }
@@ -209,10 +221,10 @@ function onPlayerDied() {
 
 function craftArrows() {
   const inv = G.inventory;
-  if (inv.wood < 1 || inv.shards < 2 || inv.arrows >= inv.maxArrows) return;
+  if (inv.wood < 1 || inv.shards < 2 || inv.arrows + 5 > inv.maxArrows) return;
   inv.wood -= 1;
   inv.shards -= 2;
-  inv.arrows = Math.min(inv.maxArrows, inv.arrows + 5);
+  inv.arrows += 5;
   bus.emit('craft', { item: 'arrows' });
   bus.emit('notify', { text: 'Crafted 5 arrows', tone: 'good' });
   bus.emit('ui', { action: 'click' });
@@ -233,10 +245,10 @@ function craftMedicine() {
 
 function craftFireArrows() {
   const inv = G.inventory;
-  if (inv.oil < 2 || inv.shards < 3 || inv.fireArrows >= inv.maxFireArrows) return;
+  if (inv.oil < 2 || inv.shards < 3 || inv.fireArrows + 5 > inv.maxFireArrows) return;
   inv.oil -= 2;
   inv.shards -= 3;
-  inv.fireArrows += Math.min(5, inv.maxFireArrows - inv.fireArrows);
+  inv.fireArrows += 5;
   bus.emit('craft', { item: 'fireArrows' });
   bus.emit('notify', { text: 'Crafted 5 fire arrows', tone: 'good' });
   bus.emit('ui', { action: 'click' });
@@ -276,10 +288,10 @@ function refreshInventory() {
   }
   els.spCount.textContent = String(inv.skillPoints);
   els.craftArrows.disabled =
-    !(inv.wood >= 1 && inv.shards >= 2 && inv.arrows < inv.maxArrows);
+    !(inv.wood >= 1 && inv.shards >= 2 && inv.arrows + 5 <= inv.maxArrows);
   els.craftMed.disabled = !(inv.oil >= 2 && inv.wood >= 1);
   els.craftFire.disabled =
-    !(inv.oil >= 2 && inv.shards >= 3 && inv.fireArrows < inv.maxFireArrows);
+    !(inv.oil >= 2 && inv.shards >= 3 && inv.fireArrows + 5 <= inv.maxFireArrows);
 
   const next = inv.armor + 1;
   const cost = ARMOR_COST[next];

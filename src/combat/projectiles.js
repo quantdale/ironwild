@@ -226,10 +226,14 @@ function resolveHit(a, machine, wp, center, radius) {
   _hitPoint.add(center);
   const pt = _hitPoint.clone(); // single heap alloc per hit, shared by hit()+FX
   const landed = machine.hit(dmg, pt, wp || null) !== false;
-  // Deflected hits (e.g. the bulwark's front armor) apply zero damage and
-  // must not ignite either - armor identity would otherwise be bypassable
-  // by tapping fire arrows into the plate for free burn damage.
-  if (fire && machine.alive && landed) {
+  // Deflected hits (e.g. the bulwark's front armor) deal zero damage and get
+  // only their own deflect FX - no damage number, hit marker or flesh sound.
+  if (!landed) {
+    deactivate(a);
+    return;
+  }
+  // Deflected hits would otherwise bypass armor identity by igniting.
+  if (fire && machine.alive) {
     applyBurn(machine, BURN_DURATION * (0.35 + 0.65 * (a.power ?? 1))); // weak or body hits ignite
   }
   bus.emit('machineHit', {

@@ -86,6 +86,6 @@ export function createXp() {
  * is fully event-driven, so there is no per-frame work; dt is validated
  * and ignored, exactly like the sibling systems guard their inputs.
  */
-export function updateXp(dt) {
-  if (typeof dt !== 'number' || !isFinite(dt)) dt = 1 / 60;
+export function updateXp(_dt) {
+  // XP progression is fully event-driven: no per-frame work.
 }

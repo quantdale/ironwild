@@ -234,7 +234,7 @@ function updateDots(heading) {
       const m = G.machines[i];
       if (!m || !m.alive || !m.aggro || !m.group) continue;
       _v.subVectors(m.group.position, pp);
-      const bearing = Math.atan2(_hdPos.x, -_hdPos.z) * RAD2DEG;
+      const bearing = Math.atan2(_v.x, -_v.z) * RAD2DEG;
       let rel = bearing - heading;
       rel = ((rel + 540) % 360) - 180; // wrap to [-180,180]
       const d = dotPool[di++];

@@ -64,12 +64,12 @@ function addRimLight(mat, colorHex, strength) {
         '#include <common>\nuniform vec3 uRimColor;\nuniform float uRimStrength;',
       )
       .replace(
-        '#include <output_fragment>',
+        '#include <opaque_fragment>', // r154+ name (was output_fragment)
         [
           'float rimF = 1.0 - clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0);',
           'rimF = pow(rimF, 2.6);',
           'outgoingLight += uRimColor * rimF * uRimStrength;',
-          '#include <output_fragment>',
+          '#include <opaque_fragment>',
         ].join('\n'),
       );
   };
@@ -266,7 +266,7 @@ export function createPlayer() {
         player.vel.z += _push.z;
       }
     }
-    bus.emit('playerHit', { amount: dealt, hp: player.hp });
+    bus.emit('playerHit', { amount: dealt, hp: player.hp, pos: fromPos || null });
     if (player.hp <= 0) {
       player.hp = 0;
       player.dead = true;
@@ -403,10 +403,10 @@ export function createPlayer() {
 
     // --- vertical: swim buoyancy vs jump + gravity ---
     if (player.swimming) {
-      // Space swims up; near the surface hold position instead of launching
-      // out of the water. Otherwise drift down gently.
-      const nearSurface = p.y > CONFIG.waterLevel - 0.55;
-      const vyTarget = (!player.dead && Input.down('Space') && !nearSurface)
+      // Space swims up; the rise carries through the swim-exit threshold so
+      // momentum breaches into a small hop out of the water. Otherwise drift
+      // down gently.
+      const vyTarget = (!player.dead && Input.down('Space'))
         ? SWIM_RISE_SPEED
         : SWIM_SINK_SPEED;
       v.y = damp(v.y, vyTarget, 4, dt);

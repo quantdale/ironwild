@@ -827,7 +827,6 @@ function buildLogs(rng, target) {
 
 // Shared wind clock for the GPU-swayed ground cover (advanced in updateProps).
 const groundcoverTime = { value: 0 };
-let groundcoverMesh = null;
 
 // A single tuft: a fan of thin tapered blades, bases at the origin so the
 // vertex wind (scaled by local height) bends only the tips.
@@ -918,7 +917,6 @@ function buildGroundcover(rng, target) {
   }
   // Hide any unfilled tail slots.
   for (let i = placed; i < target; i++) mesh.setMatrixAt(i, ZERO_MATRIX);
-  groundcoverMesh = mesh;
   flushInstances(mesh);
 }
 
@@ -983,7 +981,9 @@ export function updateProps(dt) {
   updateReedSway(t); // v2: wind-driven reed sway
   // v7: ground-cover sways entirely on the GPU - just advance its wind clock,
   // scaled by live weather wind so gusts ripple the whole carpet at once.
-  groundcoverTime.value = t * (0.6 + windAmp() * 0.5);
+  // Integrated (not elapsed*multiplier) so the shader phase rate tracks wind
+  // smoothly instead of racing backward/forward as the multiplier changes.
+  groundcoverTime.value += dt * (0.6 + windAmp() * 0.5);
   if (!G.player) return;
 
   // Gentle bob + spin for every live pickup (covers machine loot drops too).
@@ -998,6 +998,7 @@ export function updateProps(dt) {
 
   // Nearest untaken pickup within range drives the prompt (emit on change only).
   let best = null;
+  let bestI = -1;
   let bestD2 = PROMPT_DIST * PROMPT_DIST;
   const px = G.player.pos.x;
   const pz = G.player.pos.z;
@@ -1010,6 +1011,7 @@ export function updateProps(dt) {
     if (d2 <= bestD2) {
       bestD2 = d2;
       best = p;
+      bestI = i;
     }
   }
   const want = best ? PROMPT_TEXT[best.type] : null;
@@ -1019,9 +1021,9 @@ export function updateProps(dt) {
   }
   if (best && Input.pressed('KeyE')) {
     const amount = G.skills.scavenger ? 2 : 1;
-    best.taken = true;
     G.inventory[best.type] += amount;
     if (best.mesh.parent) G.scene.remove(best.mesh);
+    pickups.splice(bestI, 1); // drop the record too - keeps per-frame scans bounded
     bus.emit('pickup', { type: best.type, amount });
     bus.emit('notify', { text: `+${amount} ${best.type}`, tone: 'good' });
     activePrompt = null;

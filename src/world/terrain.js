@@ -236,7 +236,9 @@ function buildFoamRing() {
   const indices = [];
   for (let i = 0; i < FOAM_SEGMENTS; i++) {
     const a = i * 2;
-    indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    // Wound CCW seen from above: outer_i - inner_i points outward radially,
+    // so the naive (a, a+1, a+2) order faces -Y and gets front-face culled.
+    indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -442,7 +444,7 @@ export function createTerrain() {
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
-        '#include <common>\nuniform float uWaveTime;\nvarying vec2 vLakePos;\nvarying vec3 vWaterWorldPos;',
+        '#include <common>\nuniform float uWaveTime;\nvarying vec2 vLakePos;\nvarying vec3 vWaterWorldPos;\nvarying vec3 vWNormal;',
       )
       .replace(
         '#include <begin_vertex>',
@@ -453,6 +455,7 @@ export function createTerrain() {
           '  + 0.6 * sin((position.x + position.z) * 0.07 + uWaveTime * 0.6);',
           'transformed.y += wv * 0.13;',
           'vWaterWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;',
+          'vWNormal = normalize(mat3(modelMatrix) * objectNormal);', // world space
         ].join('\n'),
       );
     shader.fragmentShader = shader.fragmentShader
@@ -462,6 +465,7 @@ export function createTerrain() {
           '#include <common>',
           'varying vec2 vLakePos;',
           'varying vec3 vWaterWorldPos;',
+          'varying vec3 vWNormal;',
           'const vec2 LAKE_C = vec2(0.0, -60.0);',
           'uniform vec3 uSkyTop;',
           'uniform vec3 uSkyHorizon;',
@@ -479,22 +483,24 @@ export function createTerrain() {
         ].join('\n'),
       )
       .replace(
-        '#include <output_fragment>',
+        '#include <opaque_fragment>', // renamed from output_fragment in three r154
         [
           // v6: the fresnel highlight now samples the LIVE sky gradient along
           // the reflected view ray instead of a flat colour - a free "sky
           // reflection" that already tracks day/night/dusk/storm exactly,
           // plus a sun glint so a low sun glitters across the wave crests
-          // the way real open water does.
+          // the way real open water does. Injected right before
+          // opaque_fragment: outgoingLight is final there but still
+          // pre-tonemapping / pre-fog.
           'vec3 waterViewDir = normalize(cameraPosition - vWaterWorldPos);',
-          'vec3 waterNormal = normalize(normal);',
+          'vec3 waterNormal = normalize(vWNormal);', // world space (`normal` is view space here)
           'float waterFresnel = pow(1.0 - max(dot(waterNormal, waterViewDir), 0.0), 3.0);',
           'vec3 reflectDir = reflect(-waterViewDir, waterNormal);',
           'vec3 skyReflect = mix(uSkyHorizon, uSkyTop, smoothstep(-0.1, 0.5, reflectDir.y));',
           'outgoingLight += waterFresnel * 0.5 * skyReflect;',
           'float glint = pow(max(dot(reflectDir, normalize(uSunDir)), 0.0), 260.0);',
           'outgoingLight += glint * uSunVis * 2.2 * uSunColor;',
-          '#include <output_fragment>',
+          '#include <opaque_fragment>',
         ].join('\n'),
       );
   };

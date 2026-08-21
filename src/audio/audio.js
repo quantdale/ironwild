@@ -23,6 +23,7 @@ let ambienceIn = null;  // entry point for ambience loops (skips reverb)
 let noiseBuf = null;    // shared 1.5s white-noise buffer for bursts
 let windBuf = null;     // 4s looped noise buffer for wind
 let voices = 0;         // live one-shot voice count
+let unlocked = false;   // set by the first real user gesture (hooks at EOF)
 
 // v2 volume stages + music/weather buses (created in initAudio)
 let sfxGain = null;     // sfx volume stage; dry + reverb paths both pass through
@@ -45,8 +46,8 @@ let droneOscA = null, droneOscB = null;               // combat tense drone
 let lastCalmT = -1, lastExpT = -1, lastComT = -1;     // crossfade glide caches
 let lastRainT = -1;                                   // rain bed glide cache
 let nextPluckAt = 0, nextPulseAt = 0, pluckStep = 0;  // layer schedulers
-let lastWeatherInt = -1;                              // < 0 => unprimed
-let lastThunderAt = -99;
+let lastThunderAt = -99;                              // thunder min-gap clock
+let lastHandledStrikeAt = -1;                         // < w.lastStrikeAt => boom due
 
 // v3 boss layer state touched by updateAudio()
 let bossGain = null;                  // boss music bus (war drums + detuned saw pad)
@@ -125,6 +126,7 @@ function noiseVoice(o) {
   const dur = o.dur != null ? o.dur : 0.2;
   const src = ctx.createBufferSource();
   src.buffer = noiseBuf;
+  if (dur > noiseBuf.duration) src.loop = true; // long beds wrap instead of truncating
   const off = o.offset != null ? o.offset : Math.random() * Math.max(0, noiseBuf.duration - dur - 0.1);
   const f = ctx.createBiquadFilter();
   f.type = o.filter || 'lowpass';
@@ -247,11 +249,64 @@ const SYNTHS = {
     return osc;
   },
 
+  // enrage bellow: slower/deeper LFO-amplitude-modulated growl; opts.size
+  // scales pitch down / volume up for bigger machines
+  growl(o, a) {
+    const t = ctx.currentTime;
+    const s = clamp(o && o.size != null ? o.size : 2.2, 0.5, 2.5);
+    const f = clamp(58 / Math.pow(s, 0.5), 34, 66) + Math.random() * 4;
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.value = f;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 260;
+    lp.Q.value = 1.4;
+    const am = ctx.createGain(); // tremolo stage: base 0.5 +/- 0.45
+    am.gain.value = 0.5;
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 6 + Math.random() * 2;
+    const lfoAmt = ctx.createGain();
+    lfoAmt.gain.value = 0.45;
+    lfo.connect(lfoAmt);
+    lfoAmt.connect(am.gain);
+    const env = ctx.createGain();
+    const vol = Math.max(0.0001, 0.36 * clamp(s, 0.6, 1.8) * (a != null ? a : 1));
+    env.gain.setValueAtTime(0.0001, t);
+    env.gain.exponentialRampToValueAtTime(vol, t + 0.12);
+    env.gain.setValueAtTime(vol, t + 0.8);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
+    osc.connect(lp);
+    lp.connect(am);
+    am.connect(env);
+    env.connect(o.dest || busIn); // honor positional panner when provided
+    osc.start(t);
+    lfo.start(t);
+    osc.stop(t + 1.13);
+    lfo.stop(t + 1.13);
+    return osc;
+  },
+
   // rising two-tone chirp (softened squares)
   machineAlert(o, a) {
     const t = ctx.currentTime;
     toneVoice({ t0: t, type: 'square', f0: 470, dur: 0.1, vol: 0.11, attack: 0.01, lpf: 1900, attn: a });
     return toneVoice({ t0: t + 0.115, type: 'square', f0: 705, dur: 0.15, vol: 0.11, attack: 0.01, lpf: 2100, attn: a });
+  },
+
+  // dive/hiss shriek: two detuned squares sweeping down together, ~0.4s
+  screech(o, a) {
+    const t = ctx.currentTime;
+    const d = Math.random() * 40 - 20; // slight per-call detune variety
+    const s1 = toneVoice({
+      t0: t, type: 'square', f0: 1600 + d, f1: 700, glideT: 0.32,
+      dur: 0.36, vol: 0.11, attack: 0.008, lpf: 4500, attn: a,
+    });
+    toneVoice({
+      t0: t, type: 'square', f0: 1665 + d, f1: 735, glideT: 0.34,
+      dur: 0.38, vol: 0.08, attack: 0.008, lpf: 4500, attn: a,
+    });
+    return s1;
   },
 
   // big boom: lowpass-swept noise + downward saw sweep + sub weight, ~1.2s
@@ -645,18 +700,20 @@ function warDrum(t0) {
   noiseVoice({ t0, dur: 0.06, vol: 0.12, filter: 'lowpass', f0: 500, q: 1, dest: bossGain });
 }
 
-/** Thunder after a lightning spike: big filtered noise burst + sub sweep with
- *  a random 0.4..1.6s strike->sound delay (no distance source available). */
-function thunderBoom(intensity) {
-  const t = ctx.currentTime + 0.4 + Math.random() * 1.2;
-  const v = 0.32 + 0.42 * clamp(intensity, 0, 1);
+/** Thunder for a logged lightning strike: big filtered noise burst + sub sweep,
+ *  delayed by strike distance (sound covers ~340 m/s) and quieter the farther
+ *  the bolt landed. */
+function thunderBoom(dist) {
+  const d = clamp(dist != null ? dist : 120, 0, 300);
+  const t = ctx.currentTime + Math.max(0.12, d / 340);
+  const v = clamp(0.65 - d / 500, 0.1, 0.55);
   noiseVoice({
     t0: t, dur: 2.4, vol: v, filter: 'lowpass',
     f0: 900, fMid: 220, fMidT: 0.5, f1: 55, q: 0.6, attack: 0.02,
     dest: ambienceIn,
   });
   toneVoice({ t0: t, f0: 62, f1: 22, dur: 2.0, vol: v * 0.9, attack: 0.01, dest: ambienceIn });
-  if (intensity > 0.55) { // close strike: sharp crack transient on top
+  if (d < 110) { // close strike: sharp crack transient on top
     noiseVoice({
       t0: t, dur: 0.14, vol: v * 0.5, filter: 'highpass',
       f0: 1500, q: 0.7, attack: 0.002, dest: ambienceIn,
@@ -666,8 +723,10 @@ function thunderBoom(intensity) {
 
 // ------------------------------------------------------------------ public --
 
-/** Create/resume the AudioContext and build the graph. Safe to call often. */
+/** Create/resume the AudioContext and build the graph. Safe to call often;
+ *  a no-op until the first user gesture sets `unlocked` (autoplay policy). */
 export function initAudio() {
+  if (!ctx && !unlocked) return;
   if (ctx) {
     if (ctx.state === 'suspended') ctx.resume().catch(() => {});
     return;
@@ -785,8 +844,8 @@ export function sfx(name, opts = {}) {
 }
 
 /** Per-frame ambience scheduling. Cheap; safe to call before initAudio().
- *  dt is unused here (all timing runs off the audio clock). */
-export function updateAudio(dt) {
+ *  _dt is unused here (all timing runs off the audio clock). */
+export function updateAudio(_dt) {
   if (!ctx) return;
   const t = ctx.currentTime;
 
@@ -808,16 +867,17 @@ export function updateAudio(dt) {
   updateListener();
 
   // v2: threat-driven music crossfade (calm pad / explore / combat)
+  const active = G.started && !G.paused && !G.gameOver;
   const threat = clamp(G.threat || 0, 0, 1);
   const calmT = (1 - threat) * 1.5; // >1 base offsets the quieter music bus
   const expT = smoothstep(0.15, 0.3, threat) * (1 - smoothstep(0.6, 0.85, threat));
-  const comT = smoothstep(0.5, 0.8, threat);
+  const comT = active ? smoothstep(0.5, 0.8, threat) : 0; // duck drone on pause/death
   if (Math.abs(calmT - lastCalmT) > 0.01) { lastCalmT = calmT; glideGain(calmGain, calmT, 0.6); }
   if (Math.abs(expT - lastExpT) > 0.01) { lastExpT = expT; glideGain(exploreGain, expT, 0.6); }
   if (Math.abs(comT - lastComT) > 0.01) { lastComT = comT; glideGain(combatGain, comT, 0.6); }
 
   // explore plucks / combat pulses: lookahead-scheduled only while audible
-  if (exploreGain && exploreGain.gain.value > 0.02) {
+  if (active && exploreGain && exploreGain.gain.value > 0.02) {
     if (nextPluckAt < t - 0.25) nextPluckAt = t + 0.1; // resync after tab-hidden gaps
     while (nextPluckAt <= t + 0.12) {
       pluckNote(nextPluckAt);
@@ -826,7 +886,7 @@ export function updateAudio(dt) {
   } else {
     nextPluckAt = t + 0.1;
   }
-  if (combatGain && combatGain.gain.value > 0.02) {
+  if (active && combatGain && combatGain.gain.value > 0.02) {
     if (nextPulseAt < t - 0.25) nextPulseAt = t + 0.1;
     while (nextPulseAt <= t + 0.12) {
       combatPulse(nextPulseAt);
@@ -837,12 +897,12 @@ export function updateAudio(dt) {
   }
 
   // v3: boss proximity layer — crossfade war drums + saw pad on G.bossNear
-  const bossT = G.bossNear ? 0.9 : 0;
+  const bossT = active && G.bossNear ? 0.9 : 0; // duck choir on pause/death
   if (bossGain && Math.abs(bossT - lastBossT) > 0.01) {
     lastBossT = bossT;
     glideGain(bossGain, bossT, 0.8); // smooth setTargetAtTime both ways
   }
-  if (bossGain && bossGain.gain.value > 0.02) {
+  if (active && bossGain && bossGain.gain.value > 0.02) {
     if (nextDrumAt < t - 0.25) nextDrumAt = t + 0.1; // resync after tab-hidden gaps
     while (nextDrumAt <= t + 0.12) {
       warDrum(nextDrumAt);
@@ -852,18 +912,21 @@ export function updateAudio(dt) {
     nextDrumAt = t + 0.1;
   }
 
-  // v2: weather loops — rain bed level + thunder booms on lightning spikes
+  // v2: weather loops — rain bed level + thunder booms off the strike log
   const w = G.weather;
   if (w && rainGain) {
     const rainy = w.type === 'rain' || w.type === 'storm';
     const rainT = rainy ? clamp(w.intensity, 0, 1) * 0.16 : 0;
     if (Math.abs(rainT - lastRainT) > 0.004) { lastRainT = rainT; glideGain(rainGain, rainT, 0.5); }
-    if (lastWeatherInt >= 0 && w.type === 'storm' &&
-        w.intensity - lastWeatherInt > 0.22 && t - lastThunderAt > 4) {
-      lastThunderAt = t;
-      thunderBoom(w.intensity);
+    // weather.js logs each bolt (lastStrikeAt/lastStrikeDist); boom once per
+    // entry, delayed/volume'd by distance, with a min-gap for clustered bolts
+    if (typeof w.lastStrikeAt === 'number' && w.lastStrikeAt > lastHandledStrikeAt) {
+      lastHandledStrikeAt = w.lastStrikeAt;
+      if (t - lastThunderAt > 4) {
+        lastThunderAt = t;
+        thunderBoom(w.lastStrikeDist);
+      }
     }
-    lastWeatherInt = w.intensity;
   }
 
   // day birds / night crickets
@@ -942,9 +1005,15 @@ bus.on('settingsChanged', (p) => {
   else if (p.key === 'sfx') glideGain(sfxGain, v, 0.03);
 });
 
-// backup unlock hooks: menus also call initAudio(), this guarantees it even
-// if they don't. Listeners persist so a later suspend gets resumed too.
+// unlock hooks: browsers refuse to start an AudioContext created before a real
+// user gesture, so the first pointerdown/keydown flips `unlocked` and builds
+// the graph (boot-time initAudio() calls stay cheap no-ops until then).
+// Listeners persist so a later suspend gets resumed too.
 if (typeof window !== 'undefined') {
-  window.addEventListener('pointerdown', () => initAudio());
-  window.addEventListener('keydown', () => initAudio());
+  window.addEventListener('pointerdown', () => { unlocked = true; initAudio(); });
+  window.addEventListener('keydown', () => { unlocked = true; initAudio(); });
+  // returning to a visible tab can leave the context suspended/interrupted
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && ctx && ctx.state !== 'running') ctx.resume().catch(() => {});
+  });
 }

@@ -71,6 +71,14 @@ export function createBow() {
   window.addEventListener('mousedown', onMouseDown);
   window.addEventListener('mouseup', onMouseUp);
   window.addEventListener('blur', onBlur);
+  // Contract (see updateBow): pausing mid-draw silently cancels the shot.
+  // updateBow never runs while paused, so the cancel happens at the source.
+  bus.on('ui', ({ action }) => {
+    if (action === 'pause' && (_drawing || _drawT > 0)) {
+      _drawT = 0;
+      _drawing = false;
+    }
+  });
 }
 
 /** Per-frame draw/release logic + string/nock animation. dt is already time-scaled. */

@@ -8,7 +8,7 @@
 // range, all the time, not just during a scan.
 
 import * as THREE from 'three';
-import { G, CONFIG } from '../core/state.js';
+import { G } from '../core/state.js';
 
 const MAX_MARKERS = 48;   // generous: up to ~3 weak points x 16 machines
 const RANGE_SQ = 45 * 45; // matches ai.js's SIGHT_DIST-ish scale
@@ -32,7 +32,9 @@ function makeReticleTexture() {
   c.strokeStyle = '#f4fbff';
   c.lineWidth = 3.5;
   drawReticle(c);
-  return new THREE.CanvasTexture(cv);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
 
 function drawReticle(c) {

@@ -84,7 +84,9 @@ function buildCloudBlob(rng) {
   let total = 0;
   for (let i = 0; i < puffs; i++) {
     const r = 7 + rng() * 9;
-    const geo = new THREE.SphereGeometry(r, 7, 5);
+    // toNonIndexed: SphereGeometry is indexed, and the merge below copies raw
+    // attribute arrays - an index would be dropped, drawing lattice soup.
+    const geo = new THREE.SphereGeometry(r, 7, 5).toNonIndexed();
     // Puffs spread along a loose horizontal ellipse; centre puff is tallest.
     const spread = (i - (puffs - 1) / 2) * (8 + rng() * 5);
     const lift = i === Math.floor(puffs / 2) ? r * 0.35 : rng() * r * 0.3;
@@ -344,7 +346,10 @@ export function updateEnvironment(dt) {
   dt = clamp(dt, 0, 0.1); // safety clamp (main.js clamps raw dt too)
 
   // --- day/night clock: focus slow-mo barely affects it ---
-  G.timeOfDay = (G.timeOfDay + (dt * (G.timeScale * 0.85 + 0.15)) / DAY_CYCLE) % 1;
+  // main.js already scaled dt by G.timeScale; divide it back out so focus
+  // dilates the clock by the residual factor once, not squared.
+  const ts = Math.max(G.timeScale, 1e-4);
+  G.timeOfDay = (G.timeOfDay + ((dt / ts) * (ts * 0.85 + 0.15)) / DAY_CYCLE) % 1;
 
   // --- v2 weather reaction (reads G.weather; world/weather.js owns writes) ---
   const wx = G.weather;
@@ -447,7 +452,8 @@ export function updateEnvironment(dt) {
   updateWaterWaves(G.elapsed); // v3: advance the GPU wave clock
   // v6: water fresnel/glint reads the live sky gradient + sun state so the
   // "reflection" tracks day/night/dusk/storm without a second scene render.
-  setWaterSkyUniforms(u.topColor.value, u.horizonColor.value, sunDir, sunLight.color, day + dusk * 0.6);
+  setWaterSkyUniforms(u.topColor.value, u.horizonColor.value, sunDir, sunLight.color,
+    clamp(day + dusk * 0.6, 0, 1)); // contract: 0..1 glint visibility
 
   // v3 clouds drift on the same clock (wind-scaled circling, storm greying).
   updateClouds(dt);

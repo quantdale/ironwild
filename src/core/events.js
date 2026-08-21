@@ -37,7 +37,7 @@ export const bus = {
 //   'machineHit'   { machine, point:Vector3, damage:number, weak:boolean, partName:string|null }
 //   'partBroken'   { machine, partName:string }
 //   'machineDied'  { machine, pos:Vector3 }
-//   'playerHit'    { amount:number, hp:number }
+//   'playerHit'    { amount:number, hp:number, pos:Vec3|null }
 //   'playerHealed' { hp:number }
 //   'playerDied'   {}
 //   'pickup'       { type:string, amount:number }           - resource collected

@@ -15,8 +15,11 @@ class InputManager {
 
     window.addEventListener('keydown', (e) => {
       if (e.repeat) return;
-      // Don't swallow browser shortcuts for dev tools etc.
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      // Don't swallow browser shortcuts for dev tools etc. - but let the
+      // modifier keys themselves through: a Control keydown reports its own
+      // ctrlKey=true, and ControlLeft is the dodge binding.
+      const selfMod = /^(Control|Meta|Alt)(Left|Right)$/.test(e.code);
+      if ((e.ctrlKey || e.metaKey || e.altKey) && !selfMod) return;
       this.keys.add(e.code);
       this.pressedSet.add(e.code);
       if (['Space', 'Tab'].includes(e.code)) e.preventDefault();
@@ -39,7 +42,12 @@ class InputManager {
     window.addEventListener('wheel', (e) => { this.wheelDelta += e.deltaY; }, { passive: true });
     document.addEventListener('pointerlockchange', () => {
       this.locked = document.pointerLockElement === this._element;
-      if (!this.locked) this.keys.clear();
+      if (this.locked) {
+        lockFails = 0;           // a real lock clears the failure streak...
+        this.lockBroken = false; // ...so transient errors can't degrade the session
+      } else {
+        this.keys.clear();
+      }
       if (this._onLockChange) this._onLockChange(this.locked);
     });
   }

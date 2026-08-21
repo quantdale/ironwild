@@ -34,7 +34,6 @@ import * as spearMod from './player/spear.js';
 import * as projectilesMod from './combat/projectiles.js';
 import * as damageMod from './combat/damage.js';
 import * as statusMod from './combat/status.js';
-import * as machinesMod from './machines/machines.js'; // factory registry; population goes through ai.js
 import * as aiMod from './machines/ai.js';
 import * as saveMod from './systems/save.js';
 import * as questsMod from './systems/quests.js';
@@ -190,7 +189,10 @@ const GRADE_SHADER = {
       vec3 highTint = vec3(1.05, 1.005, 0.93);
       color *= mix(shadowTint, highTint, smoothstep(0.15, 0.85, luma));
       // Gentle S-curve lift so midtones gain punch without crushing blacks.
-      color = color * color * (3.0 - 2.0 * color) * 0.28 + color * 0.72;
+      // The curve is only monotonic on [0,1]; clamp its input or HDR sun/sky
+      // values (>1) invert brightness into colored rings around the sun.
+      vec3 s = clamp(color, 0.0, 1.0);
+      color = color * 0.72 + s * s * (3.0 - 2.0 * s) * 0.28;
       color *= 1.0 - dot(d, d) * vignette;
       // Animated film grain, subtle and luma-weighted (less visible in bright skies).
       float n = hash(vUv * 800.0 + uTime * 37.0) - 0.5;
@@ -234,6 +236,10 @@ function applyQuality() {
   if (!renderer) return;
 
   renderer.setPixelRatio(preset.pixelRatio);
+  // EffectComposer caches _pixelRatio at construction; without this a tier
+  // switch leaves composer buffers at the old resolution until the next
+  // window resize (setPixelRatio internally re-runs setSize on every pass).
+  if (composer) composer.setPixelRatio(preset.pixelRatio);
 
   const light = findSunLight();
   if (!light) {
@@ -302,7 +308,9 @@ let realTime = 0;
 function updatePostFX(rawDt) {
   realTime += rawDt;
   if (gradePass) {
-    gradePass.uniforms.uTime.value = realTime;
+    // Wrap grain time: past ~2^24 the hash's float32 ULP exceeds 1 and the
+    // grain stops animating (white noise - the wrap itself is invisible).
+    gradePass.uniforms.uTime.value = realTime % 256;
     gradePass.uniforms.grain.value = 0.028 * cinematicAmt;
     gradePass.uniforms.aberration.value = 0.0005 * cinematicAmt;
   }
@@ -534,10 +542,6 @@ function boot() {
       tipsStep(dt);
       questsStep(dt);
       xpStep(dt);
-      if (audioStep) audioStep(rawDt);
-      // Save tick polls Input.pressed (KeyP quicksave), so it only runs on
-      // frames where input is live - never in the paused branch below.
-      if (saveStep) saveStep(rawDt);
     } else {
       // Start screen / paused / dead: keep the world breathing, skip gameplay.
       if (cameraStep) cameraStep(rawDt);
@@ -545,6 +549,13 @@ function boot() {
       hudStep(rawDt);
       menusStep();
     }
+
+    // Audio expects a tick every frame (it gates its audible layers on game
+    // state itself). The save tick keeps running through pause so updateSave's
+    // rising-edge-of-pause snapshot fires on ESC/tab-hide; its KeyP quicksave
+    // poll is only reachable while unpaused. Both take raw dt.
+    if (audioStep) audioStep(rawDt);
+    if (saveStep && G.started && !G.gameOver) saveStep(rawDt);
 
     // One-shot key presses were polled by the systems above; clear them now.
     Input.endFrame();
@@ -579,8 +590,9 @@ function boot() {
     if (e && e.key === 'quality') applyQuality();
   });
 
-  // Dev/test hook: lets tooling and console inspection reach live game state.
-  window.__IW = { G, Input, bus };
+  // Dev/test hook: lets tooling and console inspection reach live game state
+  // and the render objects (quality-tier assertions, perf sampling).
+  window.__IW = { G, Input, bus, renderer, composer };
 }
 
 boot();

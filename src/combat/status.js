@@ -142,8 +142,10 @@ export function updateStatusFX(dt) {
       m.burnAcc -= TICK_INTERVAL;
       _pt.copy(m.group.position);
       _pt.y += 1.2 + m.radius * 0.5;
-      spawnTickNumber(TICK_DMG, _pt);
-      m.hit(TICK_DMG, _pt, null); // may kill the machine
+      // point=null: the exact-center tick point would land inside the bulwark's
+      // front-cone test (machines.js isFrontConeHit) and deflect every tick.
+      const landed = m.hit(TICK_DMG, null, null) !== false; // may kill the machine
+      if (landed) spawnTickNumber(TICK_DMG, _pt);
     }
     if (m.burnT <= 0 || !m.alive) {
       m.burnT = Math.max(0, m.burnT);

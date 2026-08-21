@@ -134,6 +134,8 @@ function initAI(m, idx) {
     jitterT: 0,
     // v2: duskwing flight
     anchor: new THREE.Vector3(m.group.position.x, 0, m.group.position.z),
+    homeX: m.group.position.x, // immutable spawn roost - respawns read this,
+    homeZ: m.group.position.z, // not anchor (duskwing drift/aggro reassigns it)
     anchorT: 0,
     circleAng: rng() * Math.PI * 2,
     diveTarget: new THREE.Vector3(),
@@ -406,6 +408,15 @@ function enterPatrol(m) {
   ai.atk = null;
   ai.waitT = 0;
   m.aggro = false;
+  // a sub-state cut short by target loss leaves its pose channels driven and
+  // nothing decays them - clear them or the machine freezes in that pose
+  const a = m._anim;
+  a.crouch = 0;
+  a.rear = 0;
+  a.lean = 0;
+  a.roar = 0;
+  a.rollSpin = 0;
+  m.jawTarget = null;
   if (m._anim.shadowMesh) m._anim.shadowMesh.visible = false; // drop stale dive markers
   ai.waypoints = makeWaypoints(m); // fresh route from wherever we ended up
   ai.wpIndex = 0;
@@ -472,7 +483,9 @@ function tickMachine(m, dt) {
     if (m._anim.shadowMesh) m._anim.shadowMesh.visible = false;
   }
   if (ai.crashing) {
-    const gy = heightAt(m.group.position.x, m.group.position.z);
+    // land on the water surface, never the lakebed - nothing down there can
+    // be walked out of (advanceAvoid is water-blocked everywhere in the basin)
+    const gy = Math.max(heightAt(m.group.position.x, m.group.position.z), CONFIG.waterLevel);
     m.group.position.y = Math.max(gy, m.group.position.y - 9 * dt);
     m.moveSpeed = 2; // frantic flap on the way down
     if (m.group.position.y <= gy + 0.01) {
@@ -482,6 +495,18 @@ function tickMachine(m, dt) {
       sfx('machineStep', { pos: m.group.position, size: 1.2 });
     }
     return; // no FSM while falling
+  }
+
+  // wingless splash-down: wade ashore before any FSM move - advanceAvoid is
+  // water-blocked out here and every regenerated waypoint fails its dry check
+  if (m.type === 'duskwing' && ai.grounded &&
+    heightAt(m.group.position.x, m.group.position.z) < CONFIG.waterLevel) {
+    duskwingWade(m, dt);
+    m.group.position.y = Math.max(
+      heightAt(m.group.position.x, m.group.position.z),
+      CONFIG.waterLevel,
+    );
+    return;
   }
 
   // damaged -> aggro (bramblehorn "attacks" by fleeing)
@@ -678,6 +703,25 @@ function duskwingDrift(m, dt) {
     5,
     dt,
   );
+}
+
+/** Wingless splash-down escape: turn toward the driest of 8 nearby headings
+ * and swim-walk until ashore (tickMachine routes grounded-in-water birds here). */
+function duskwingWade(m, dt) {
+  const x = m.group.position.x;
+  const z = m.group.position.z;
+  let bestAng = m.group.rotation.y;
+  let bestH = -Infinity;
+  for (let i = 0; i < 8; i++) {
+    const ang = (i / 8) * Math.PI * 2;
+    const h = heightAt(x + Math.sin(ang) * 8, z + Math.cos(ang) * 8);
+    if (h > bestH) {
+      bestH = h;
+      bestAng = ang;
+    }
+  }
+  turnToward(m, x + Math.sin(bestAng) * 8, z + Math.cos(bestAng) * 8, 3, dt);
+  advanceWater(m, 2.6, dt); // resampled every frame, so the heading self-corrects
 }
 
 // ---------------------------------------------------------------- attacks --
@@ -909,8 +953,8 @@ function ironmawAttack(m, dt, dist) {
   if (!coreOut && ai.cd <= 0 && dist < 26 && dist > 4) {
     ai.atk = 'roar';
     ai.phaseT = 0;
-  } else if (ai.boltCd <= 0 && ai.cd > 0 && dist > 12 && dist < 30) {
-    ai.atk = 'bolt'; // ranged fallback while the charge is on cooldown
+  } else if (ai.boltCd <= 0 && dist > 12 && dist < 30) {
+    ai.atk = 'bolt'; // ranged fallback while the charge is unavailable (cd or core-out)
     ai.phaseT = 0;
   }
 }
@@ -949,7 +993,7 @@ function duskwingAttack(m, dt, dist) {
   if (ai.atk === 'dive') { // accelerating stoop onto the marked spot
     ai.diveU = Math.min(1, ai.diveU + dt / 0.55);
     const u = ai.diveU;
-    const ty = heightAt(ai.diveTarget.x, ai.diveTarget.z);
+    const ty = Math.max(heightAt(ai.diveTarget.x, ai.diveTarget.z), CONFIG.waterLevel); // never stoop onto the lakebed
     m.group.position.x = lerp(ai.diveStart.x, ai.diveTarget.x, u);
     m.group.position.z = lerp(ai.diveStart.z, ai.diveTarget.z, u);
     m.group.position.y = lerp(ai.diveStart.y, ty, u * u);
@@ -982,6 +1026,10 @@ function duskwingAttack(m, dt, dist) {
     dt,
   );
   if (ai.climbT <= 0 && ai.cd <= 0 && dist < 34) {
+    if (heightAt(pp.x, pp.z) <= CONFIG.waterLevel + 0.3) {
+      ai.cd = 1.2; // wet mark: a touchdown there would strand us - keep circling
+      return;
+    }
     ai.atk = 'telegraph';
     ai.phaseT = 0;
     ai.diveTarget.copy(pp); // mark where the player stands right now
@@ -1422,7 +1470,7 @@ function monarchTick(m, dt) {
 
 const BOLT_GEO = new THREE.SphereGeometry(0.13, 8, 6);
 const BOLT_MAT = new THREE.MeshBasicMaterial({ color: 0x59e3ff });
-const bolts = []; // { mesh, vel: Vector3, life }
+const bolts = []; // { mesh, vel: Vector3, life, mul }
 
 function fireBolt(m) {
   _v1.set(0, 1.5, 1.3); // muzzle just in front of the chassis
@@ -1436,7 +1484,7 @@ function fireBolt(m) {
   const mesh = new THREE.Mesh(BOLT_GEO, BOLT_MAT);
   mesh.position.copy(_v1);
   G.scene.add(mesh);
-  bolts.push({ mesh, vel: _v3.clone().multiplyScalar(26), life: 2 });
+  bolts.push({ mesh, vel: _v3.clone().multiplyScalar(26), life: 2, mul: m.damageMul || 1 });
 }
 
 function updateBolts(dt) {
@@ -1451,7 +1499,7 @@ function updateBolts(dt) {
       _bv.copy(p.pos);
       _bv.y += 0.9;
       if (b.mesh.position.distanceToSquared(_bv) < 0.81) { // hit sphere r=0.9
-        damagePlayer(14, b.mesh.position);
+        damagePlayer(14 * b.mul, b.mesh.position);
         dead = true;
       }
     }
@@ -1507,6 +1555,7 @@ bus.on('prompt', (p) => {
   if (inSelfPrompt) return;
   otherPrompt = p && p.text ? p.text : null;
   otherPromptAt = G.elapsed;
+  if (otherPrompt) myPrompt = null; // someone took the HUD slot: drop our claim so we re-emit once they clear theirs
 });
 
 function emitPrompt(text) {
@@ -1586,8 +1635,9 @@ function updateHarvest(dt) {
 
 // ------------------------------------------------- vantage focus scanning --
 // While a focus scan is active (timeScale dropped), aiming the crosshair at a
-// Vantage emits machineScanned - once per machine per 30s cooldown. A short
-// dedupe window guards against focus.js emitting the same scan first.
+// Vantage emits machineScanned - once per machine per 30s cooldown, shared
+// with focus.js's own scanner via m._scanCd so whoever fires first gates the
+// other. A short dedupe window guards the same-frame ordering race.
 
 let selfScanEmit = false;
 let extScanMachine = null;
@@ -1610,6 +1660,7 @@ bus.on('machineScanned', (p) => {
   if (selfScanEmit) return;
   extScanMachine = m;
   extScanAt = G.elapsed;
+  m._ai.scanCd = SCAN_COOLDOWN; // focus.js fired first: adopt its cooldown so we never double-emit
   grantScanReward(m);
 });
 
@@ -1628,6 +1679,7 @@ function updateScans() {
     if (_v2.dot(G.cam.aimDir) < SCAN_COS) continue;
     if (extScanMachine === m && G.elapsed - extScanAt < 2) continue;
     m._ai.scanCd = SCAN_COOLDOWN;
+    m._scanCd = SCAN_COOLDOWN; // mirror onto focus.js's field so its scanner stays gated too
     grantScanReward(m);
     selfScanEmit = true;
     bus.emit('machineScanned', { machine: m });
@@ -1755,8 +1807,8 @@ bus.on('machineDied', ({ machine }) => {
   if (machine.type === 'monarch' || machine.type === 'vantage') return;
   respawnQueue.push({
     type: machine.type,
-    x: machine._ai.anchor.x,
-    z: machine._ai.anchor.z,
+    x: machine._ai.homeX, // spawn roost, not anchor - duskwings drift theirs
+    z: machine._ai.homeZ,
     alpha: !!machine.alpha,
     at: G.elapsed + (machine.alpha ? RESPAWN_AFTER_ALPHA : RESPAWN_AFTER),
   });

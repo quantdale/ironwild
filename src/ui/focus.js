@@ -23,7 +23,7 @@ const TAG_FADE = 1.0;           // fade-out duration at the end of the hold
 const TAG_EDGE_OP = 0.38;       // faint outline opacity while tagged
 const TAG_LABEL_OP = 0.55;      // faint label opacity while tagged
 const VANTAGE_RANGE_SQ = 50 * 50; // must be this close to scan a Vantage
-const VANTAGE_RESCAN_CD = 15;   // seconds before the same Vantage re-emits
+const VANTAGE_RESCAN_CD = 30;  // seconds before the same Vantage re-emits (matches ai.js SCAN_COOLDOWN)
 
 let created = false;
 let scanning = false;
@@ -394,6 +394,7 @@ function makeLabelSprite(text) {
   c.textBaseline = 'middle';
   c.fillText(text, 128, 33);
   const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
   const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
   const spr = new THREE.Sprite(mat);
   spr.scale.set(2.4, 0.6, 1);
@@ -413,7 +414,9 @@ function makeDiamondTexture() {
   c.moveTo(32, 7); c.lineTo(57, 32); c.lineTo(32, 57); c.lineTo(7, 32);
   c.closePath();
   c.stroke();
-  return new THREE.CanvasTexture(cv);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
 
 function injectStyles() {

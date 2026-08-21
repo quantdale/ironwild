@@ -7,9 +7,10 @@
 // are additive and simply fall back to the fresh-boot defaults when absent.
 
 import { bus } from '../core/events.js';
-import { G } from '../core/state.js';
+import { G, CONFIG } from '../core/state.js';
 import { Input } from '../core/input.js';
 import { clamp } from '../core/utils.js';
+import { isValidQuest } from './quests.js';
 
 const SAVE_KEY = 'ironwild-save';
 const SAVE_VERSION = 3; // v3->v4: added bestiary (loader tolerates the old shape)
@@ -45,7 +46,7 @@ function serialize() {
     skills: Object.assign({}, G.skills),
     timeOfDay: typeof G.timeOfDay === 'number' ? G.timeOfDay : 0.35,
     mapRevealed: !!G.mapRevealed,
-    quests: { completed: G.quests.completed, slots },
+    quests: { completed: G.quests.completed, genCount: G.quests.genCount | 0, slots },
     xp: Object.assign({}, G.xp),           // v4: level progress used to reset on every load
     bestiary: Object.assign({}, G.bestiary), // v4: discovered/killed species
   };
@@ -86,24 +87,33 @@ export function loadGame() {
   }
   // Accept any prior save shape (2 or 3): fields absent from older saves are
   // additive and simply keep whatever createXxx() already defaulted on G.
+  // pos needs length/finiteness/magnitude checks - Vector3.set would happily
+  // inject NaN/huge values, poisoning physics and every later autosave.
   if (!data || !Number.isInteger(data.v) || data.v < 2 || data.v > SAVE_VERSION ||
-    !Array.isArray(data.pos)) return false;
+    !Array.isArray(data.pos) || data.pos.length < 3 ||
+    !data.pos.every(Number.isFinite) ||
+    Math.abs(data.pos[0]) + Math.abs(data.pos[2]) > CONFIG.worldSize) return false;
   if (!G.player || !G.player.pos) return false;
 
   G.player.pos.set(data.pos[0], data.pos[1], data.pos[2]);
-  G.player.hp = clamp(Number(data.hp) || 1, 1, G.player.maxHp); // never load back dead
+
+  // Skills restore before vitals: Heartier Frame adds +30 max hp, so a saved
+  // hp can legitimately sit above the unskilled cap. player.js re-derives
+  // maxHp from G.skills on its next update and caps hp there - only the
+  // "never load back dead" floor is enforced here.
+  if (data.skills && typeof data.skills === 'object') {
+    for (const k in G.skills) {
+      const v = data.skills[k];
+      if (v === 0 || v === 1) G.skills[k] = v;
+    }
+  }
+  G.player.hp = Math.max(1, Number(data.hp) || 1); // never load back dead
   G.player.stamina = clamp(Number(data.stamina) || 0, 0, G.player.maxStamina);
 
   if (data.inventory && typeof data.inventory === 'object') {
     for (const k in G.inventory) {
       const v = data.inventory[k];
       if (typeof v === 'number' && isFinite(v)) G.inventory[k] = v;
-    }
-  }
-  if (data.skills && typeof data.skills === 'object') {
-    for (const k in G.skills) {
-      const v = data.skills[k];
-      if (v === 0 || v === 1) G.skills[k] = v;
     }
   }
   if (typeof data.timeOfDay === 'number' && isFinite(data.timeOfDay)) {
@@ -115,9 +125,14 @@ export function loadGame() {
 
   if (data.quests && Array.isArray(data.quests.slots)) {
     G.quests.completed = data.quests.completed | 0;
+    // Contracts generated so far (drives the forced opening trio); absent on
+    // v3 saves -> 0, which replays the trio exactly like those boots did.
+    G.quests.genCount = data.quests.genCount | 0;
     for (let i = 0; i < 3; i++) {
       const q = data.quests.slots[i];
-      G.quests.slots[i] = q && typeof q === 'object' ? q : null;
+      // Malformed records (NaN refillT etc.) would wedge their slot forever -
+      // drop them; quests.js's refill path deals a replacement.
+      G.quests.slots[i] = isValidQuest(q) ? q : null;
       if (G.quests.slots[i]) bus.emit('questUpdate', { quest: G.quests.slots[i] });
     }
   }
@@ -159,9 +174,9 @@ export function initSave() {
 }
 
 /**
- * Per-frame tick (raw dt). Polls KeyP manual quicksave, saves once when a
- * pause/panel opens, and autosaves every AUTOSAVE_INTERVAL of played time -
- * all only while started && !paused && !gameOver.
+ * Per-frame tick (raw dt), driven by main.js while started && !gameOver -
+ * including through pause, so the rising-edge snapshot below actually fires.
+ * KeyP quicksave and the autosave clock stay gated on being unpaused.
  */
 export function updateSave(dt) {
   if (!inited) return;
@@ -180,7 +195,10 @@ export function updateSave(dt) {
   if (Input.pressed('KeyP')) saveGame(true);
 
   autosaveT += dt;
-  if (autosaveT >= AUTOSAVE_INTERVAL) saveGame(false);
+  if (autosaveT >= AUTOSAVE_INTERVAL) {
+    autosaveT = 0; // reset even if the write fails: retry next interval, not next frame
+    saveGame(false);
+  }
 }
 
 // Integrator-facing alias (ARCHITECTURE_V2 loop order calls save.tick(rawDt)).

@@ -84,14 +84,24 @@ function addBodySphere(m, x, y, z, r) {
   m.bodySpheres.push({ localPos: new THREE.Vector3(x, y, z), radius: r });
 }
 
-/** Register a glowing weak point; `mat` is its dedicated (per-machine) glow material. */
+/**
+ * Register a glowing weak point; `mat` is its dedicated (per-machine) glow
+ * material. x/y/z are build-time anchors only — hit tests read wp.mesh's
+ * live world transform.
+ */
 function registerWeakPoint(m, name, mesh, x, y, z, radius, multiplier, hp, mat) {
+  // Char targets on break: the dedicated glow mat plus any other per-part
+  // materials in the group, but never the machine-wide hull/rust/joint
+  // instances (breaking one part must not char the rest of the body).
+  const shared = m._bodyMats;
   const wp = {
-    name, mesh, localPos: new THREE.Vector3(x, y, z),
+    name, mesh,
     radius, multiplier, hp, maxHp: hp, broken: false, _mats: [mat],
   };
   mesh.traverse((o) => {
-    if (o.isMesh && o.material && !wp._mats.includes(o.material)) wp._mats.push(o.material);
+    if (!o.isMesh || !o.material) return;
+    if (o.material === shared.hull || o.material === shared.rust || o.material === shared.joint) return;
+    if (!wp._mats.includes(o.material)) wp._mats.push(o.material);
   });
   m.weakPoints.push(wp);
   m._anim.glowMats.push(mat);
@@ -510,12 +520,10 @@ function buildMirefang(m, mats) {
   addPart(eye, GEO_SPH, eyeMat, 0.09, 0.07, 0.09, -0.17, 0.02, 0.05);
   registerWeakPoint(m, 'eye', eye, 0, 0.84, 1.18, 0.34, 2.2, 35, eyeMat);
 
-  // nostril glows at the snout tip: the only part that breaks the surface
-  // while dormant-submerged (ai.js reads _anim.nostrilMats)
+  // nostril glows at the snout tip (decorative)
   const nostrilMat = mats.glow();
   addPart(body, GEO_SPH, nostrilMat, 0.045, 0.035, 0.045, 0.08, 0.68, 2.26);
   addPart(body, GEO_SPH, nostrilMat, 0.045, 0.035, 0.045, -0.08, 0.68, 2.26);
-  m._anim.nostrilMats = [nostrilMat];
 
   // hinged lower jaw (opens during ambush bites; generic jaw channel drives it)
   const jaw = new THREE.Group();
@@ -638,7 +646,7 @@ function buildMonarch(m, mats) {
     addPart(body, GEO_CONE, mats.rust, 0.09, 0.4, 0.09, s * 1.45, 5.05, 1.45, 1.5, 0, 0);
   }
 
-  // sweeping tail (idle sway / AI tail-swipe via _anim.tail + _anim.tailSway)
+  // sweeping tail (idle sway via _anim.tail)
   const tail = new THREE.Group();
   tail.position.set(0, 5.0, -1.5);
   body.add(tail);
@@ -1059,7 +1067,11 @@ function updateMachine(m, dt) {
     a.rollAccum += a.rollSpin * dt;
     rx += a.rollAccum;
   } else {
-    a.rollAccum = 0;
+    // roll ended: settle upright by damping the leftover tumble to the
+    // nearest full turn instead of snapping back in a single frame
+    const target = Math.round(a.rollAccum / (Math.PI * 2)) * Math.PI * 2;
+    a.rollAccum = damp(a.rollAccum, target, 6, dt);
+    rx += a.rollAccum;
   }
   a.body.position.set(px, py, 0);
   a.body.rotation.set(rx, ry, rz);
@@ -1088,21 +1100,13 @@ function updateMachine(m, dt) {
   }
 
   // v3: tail + antenna idle sway keeps mirefang/monarch rendering sanely
-  // before ai.js drives them; AI overrides the tail via a.tailSway
-  // (jawTarget-style: null = automatic idle sway)
   if (a.tail) {
-    a.tail.rotation.y = a.tailSway != null
-      ? a.tailSway
-      : Math.sin(G.elapsed * 1.6 + a.phase * 0.3) * 0.14;
+    a.tail.rotation.y = Math.sin(G.elapsed * 1.6 + a.phase * 0.3) * 0.14;
   }
   if (a.antennae) {
     const flare = 1 + a.roar * 4; // enrage roar flares the crown
     a.antennae.rotation.z = Math.sin(G.elapsed * 1.1) * 0.05 * flare;
     a.antennae.rotation.x = Math.cos(G.elapsed * 0.9) * 0.04 * flare;
-  }
-  // v3: monarch stomp telegraph - lift one leg by index (no-op at -1)
-  if (a.stompLeg >= 0 && a.stompLeg < a.legs.length) {
-    a.legs[a.stompLeg].pivot.rotation.x = -a.stompRaise * 0.9;
   }
 }
 
@@ -1110,7 +1114,10 @@ function disposeMachine(m) {
   if (m._disposed) return;
   m._disposed = true;
   for (const s of m._anim.scraps) s.mesh.removeFromParent();
-  if (m._anim.shadowMesh) m._anim.shadowMesh.removeFromParent(); // duskwing dive marker
+  if (m._anim.shadowMesh) {
+    m._anim.shadowMesh.removeFromParent(); // duskwing dive marker
+    m._anim.shadowMat.dispose(); // scene-level disc: never collected into _anim.materials
+  }
   m.group.removeFromParent();
   for (const mat of m._anim.materials) mat.dispose(); // geometries are shared caches
   const i = G.machines.indexOf(m);
@@ -1154,6 +1161,7 @@ export function createMachine(type, x, z) {
     hitFlag: false,    // set by hit(), consumed by the AI to trigger aggro
     alpha: false,      // v2: alpha variant flag (set via applyAlphaVariant)
     damageMul: 1,      // v2: outgoing damage multiplier (alpha = 1.25)
+    _bodyMats: mats,   // shared hull/rust/joint instances (see registerWeakPoint)
     _disposed: false,
     _anim: {
       body: null, bodyBaseY: 0, phase: 0, flinch: 0,
@@ -1162,10 +1170,8 @@ export function createMachine(type, x, z) {
       jaw: null, grinder: null, grindSpin: 0,
       rollSpin: 0, rollAccum: 0,   // v2: bulwark roll tumble channel
       shadowMesh: null, shadowMat: null, // v2: duskwing dive telegraph disc
-      tail: null, tailSway: null,  // v3: tail group + AI yaw override (null = auto sway)
+      tail: null,                  // v3: tail group (idle sway)
       antennae: null,              // v3: monarch antenna crown group (idle sway)
-      stompLeg: -1, stompRaise: 0, // v3: monarch stomp telegraph (raised leg index, 0..1)
-      nostrilMats: null,           // v3: mirefang nostril glow materials (surface tell)
       harvested: false,            // v2: corpse already harvested
       hullMat: mats.hull, glowMats: [], materials: [], scraps: [],
       deathT: 0, deadTime: 0, fadeT: -1, side: 1, deathY: 0,

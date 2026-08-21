@@ -181,7 +181,9 @@ function applySwingHits() {
 
     const dmg = wp ? DMG_WEAK : DMG_BODY;
     const pt = _point.clone(); // single heap alloc per hit, shared by hit()+FX
-    m.hit(dmg, pt, wp);        // wp===null -> plain body hit
+    // Deflected hits (bulwark front plate) deal zero damage and get only
+    // their own deflect FX - no damage number, hit marker or camera jolt.
+    if (m.hit(dmg, pt, wp || null) === false) continue; // wp===null -> plain body hit
     bus.emit('machineHit', {
       machine: m,
       point: pt,
