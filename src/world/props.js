@@ -14,6 +14,13 @@ import { bus } from '../core/events.js';
 import { G, CONFIG } from '../core/state.js';
 import { Input } from '../core/input.js';
 import { smoothstep, makeRng, randRange } from '../core/utils.js';
+// Wave D cell streaming: per-cell registration + batch splitting (same key
+// space - CELL_SIZE floor grid - on both sides of that handshake).
+import {
+  CELL_SIZE, createCells, updateCells,
+  register as registerCell,
+} from './cells.js';
+import { groupInstancesByCell } from './lod.js';
 
 // ---- tuning ---------------------------------------------------------------
 const TREE_COUNT = 230;  // v2: bigger pool so the NE forest reaches ~1.6x meadow density
@@ -37,6 +44,14 @@ const LOG_COUNT = 25;      // v3: fallen logs with a moss cap
 // grass). Animated entirely on the GPU via a vertex-shader wind so the whole
 // carpet sways for the cost of one per-frame uniform, not a CPU recompose.
 const GROUNDCOVER_COUNT = 14000; // halved on low quality (far tufts collapse, so cheap)
+// Wave D: the two most numerous batches (ground cover + trees) are split into
+// per-cell InstancedMeshes registered with world/cells.js so frustum+distance
+// culling can skip whole cells - a giant globally-visible batch (the old
+// single 14k-instance carpet) defeats culling by design, exactly the problem
+// class this fixes. Placements are generated EXACTLY as before (same RNG
+// stream, same math) and only regrouped afterwards, so the world stays
+// bit-identical per seed; hidden zero-scale filler slots are simply dropped
+// (they drew nothing before either).
 
 const PROMPT_TEXT = {
   wood: '[E] Collect wood',
@@ -65,7 +80,11 @@ const bladeYaw = new Float32Array(GRASS_TOTAL);
 const bladeH = new Float32Array(GRASS_TOTAL);
 
 // tree canopy sway scratch (v2: wind-driven, recomposed round-robin)
-let treeConeMeshes = null;
+// Wave D: the global cone meshes are gone - canopies live in per-cell batches
+// now. `coneRoute[layer][treeIndex] = { mesh, idx }` addresses each existing
+// canopy layer inside its cell-local buffer (absent layer = null, formerly a
+// ZERO_MATRIX slot in a global buffer).
+let coneRoute = null;
 let treePlaced = 0;
 let treeCursor = 0;
 const treeX = new Float32Array(TREE_COUNT);
@@ -95,7 +114,7 @@ const _colB = new THREE.Color();
 const _FOREST_LEAF = new THREE.Color(0x3f6234);    // darker forest canopy/blade tint
 const _HIGHLAND_BLADE = new THREE.Color(0x9a8f6e); // grey-brown highland grass tint
 const _biome = { forest: 0, highland: 0 };         // biomeFactors() scratch (build time)
-const ZERO_MATRIX = new THREE.Matrix4().makeScale(0, 0, 0);
+const _touchedCones = new Set(); // cell meshes touched by this frame's sway batch
 
 // ---- helpers --------------------------------------------------------------
 
@@ -146,6 +165,48 @@ function flushInstances(...meshes) {
     m.instanceMatrix.needsUpdate = true;
     if (m.instanceColor) m.instanceColor.needsUpdate = true;
   }
+}
+
+// Wave D: install staged placements ({m: Matrix4, c: Color|null}) as per-cell
+// InstancedMesh batches and register each with the cell manager. Grouping uses
+// lod.groupInstancesByCell (same 'cx,cz' key space as cells.cellKeyAt at
+// CELL_SIZE); instance colours ride along via a matrix-identity map so bucket
+// order can never desync. Unlike makeInstanced, frustumCulled stays ON: each
+// cell mesh's instances are spatially tight, so its computed bounding sphere
+// is valid for culling (that was false for global batches on purpose).
+// pad grows the culling sphere slightly for batches whose matrices mutate
+// after build (tree canopy sway drifts tips a fraction of a unit).
+function installCellBatches(kind, geo, mat, items, castShadow, pad = 0) {
+  const colorByMatrix = new Map();
+  const indexByMatrix = new Map(); // staged order -> item index (route alignment)
+  for (let i = 0; i < items.length; i++) {
+    colorByMatrix.set(items[i].m, items[i].c);
+    indexByMatrix.set(items[i].m, i);
+  }
+  const groups = groupInstancesByCell(items.map((it) => it.m), CELL_SIZE);
+  const meshes = [];
+  const route = new Array(items.length); // item index -> {mesh, local idx}
+  for (const [key, mats] of groups) {
+    const mesh = new THREE.InstancedMesh(geo, mat, mats.length);
+    mesh.castShadow = castShadow;
+    mesh.receiveShadow = false;
+    mesh.frustumCulled = true; // per-cell bounds are trustworthy now
+    for (let j = 0; j < mats.length; j++) {
+      mesh.setMatrixAt(j, mats[j]);
+      const c = colorByMatrix.get(mats[j]);
+      if (c) mesh.setColorAt(j, c);
+      route[indexByMatrix.get(mats[j])] = { mesh, idx: j };
+    }
+    flushInstances(mesh);
+    if (pad > 0 && mesh.computeBoundingSphere) {
+      mesh.computeBoundingSphere();
+      mesh.boundingSphere.radius += pad;
+    }
+    G.scene.add(mesh);
+    registerCell(key, { group: mesh, kind });
+    meshes.push(mesh);
+  }
+  return { meshes, route };
 }
 
 // Merge primitive parts ({geo,x,y,z,rx,ry,rz,sx,sy,sz,c?}) into one geometry
@@ -417,13 +478,11 @@ function buildTrees(rng) {
     coneGeo.setAttribute('color', new THREE.BufferAttribute(cc, 3));
   }
 
-  const trunkMesh = makeInstanced(trunkGeo, barkMat, TREE_COUNT, true, false);
-  const coneMeshes = [
-    makeInstanced(coneGeo, leafMat, TREE_COUNT, true, false),
-    makeInstanced(coneGeo, leafMat, TREE_COUNT, true, false),
-    makeInstanced(coneGeo, leafMat, TREE_COUNT, true, false),
-  ];
-  treeConeMeshes = coneMeshes; // kept for the sway recompositor
+  // Wave D: stage placements instead of writing straight into global meshes.
+  // Everything below keeps the v2/v7 RNG stream and placement math untouched;
+  // only the final write-out changed (per-cell batches instead of global ones).
+  const trunkItems = [];
+  const coneItems = [[], [], []];
 
   _colA.setHex(0x6a8f4f);
   _colB.setHex(0x8aa85c);
@@ -455,11 +514,13 @@ function buildTrees(rng) {
     _obj.rotation.set(leanX, yaw, leanZ);
     _obj.scale.setScalar(s);
     _obj.updateMatrix();
-    trunkMesh.setMatrixAt(placed, _obj.matrix);
-    trunkMesh.setColorAt(placed, colorJitter(0x6b4a2f, 0.25, rng));
+    trunkItems.push({ m: _obj.matrix.clone(), c: colorJitter(0x6b4a2f, 0.25, rng).clone() });
 
     for (let k = 0; k < 3; k++) {
-      const mesh = coneMeshes[k];
+      // Colour draws happen for EVERY layer exactly as before (RNG parity);
+      // absent layers just aren't staged anymore - they were zero-scale filler.
+      _col.lerpColors(_colA, _colB, rng()).multiplyScalar(randRange(rng, 0.75, 1.0));
+      _col.lerp(_FOREST_LEAF, ff * 0.45); // forest canopy runs darker
       if (k < coneCount) {
         _obj.position.set(x, y + (1.15 + 0.78 * k) * s, z);
         _obj.rotation.set(leanX * 0.5, yaw, leanZ * 0.5);
@@ -467,13 +528,10 @@ function buildTrees(rng) {
         const ch = (1.5 - 0.28 * k) * s;
         _obj.scale.set(cr, ch, cr);
         _obj.updateMatrix();
-        mesh.setMatrixAt(placed, _obj.matrix);
-      } else {
-        mesh.setMatrixAt(placed, ZERO_MATRIX); // hide unused canopy layer
+        // `tree` carries the owning tree slot: layers skip coneCount<3 trees,
+        // so staged indices alone would misalign the sway routing tables.
+        coneItems[k].push({ m: _obj.matrix.clone(), c: _col.clone(), tree: placed });
       }
-      _col.lerpColors(_colA, _colB, rng()).multiplyScalar(randRange(rng, 0.75, 1.0));
-      _col.lerp(_FOREST_LEAF, ff * 0.45); // forest canopy runs darker
-      mesh.setColorAt(placed, _col);
     }
 
     // Record for wind-driven canopy sway (v2).
@@ -485,50 +543,65 @@ function buildTrees(rng) {
     treeLeanXA[placed] = leanX;
     treeLeanZA[placed] = leanZ;
     treePhase[placed] = rng() * Math.PI * 2;
-    treeCones[placed] = coneCount;
+    treeCones[placed] = coneCount; // recorded for parity/debug; sway routes via coneRoute
     placed++;
   }
   treePlaced = placed;
-  flushInstances(trunkMesh, ...coneMeshes);
+
+  // Wave D: regroup staged placements into per-cell batches registered with
+  // cells.js, and keep the per-tree routing tables the sway recompositor uses
+  // to address instances inside cell-local buffers.
+  installCellBatches('treeTrunk', trunkGeo, barkMat, trunkItems, true);
+  const routes = [];
+  for (let k = 0; k < 3; k++) {
+    // pad: sway lean shifts canopy tips a fraction of a unit after the culling
+    // sphere is computed - grow it so frustum tests stay conservative.
+    const inst = installCellBatches(`treeCone${k}`, coneGeo, leafMat, coneItems[k], true, 0.5);
+    // Re-index batch routing by TREE slot (staged items skip absent layers).
+    const byTree = new Array(treePlaced).fill(null);
+    for (let n = 0; n < coneItems[k].length; n++) {
+      byTree[coneItems[k][n].tree] = inst.route[n];
+    }
+    routes.push(byTree);
+  }
+  coneRoute = routes;
 }
 
 // Recompose one tree's canopy cones with a wind-driven sway (trunk stays put).
+// Wave D: instances are addressed through their per-cell batch routing; a
+// layer a tree doesn't have has no route entry (it used to be a hidden
+// zero-scale slot in the global buffer, recomposed pointlessly every pass).
 function composeTreeCanopy(i, t) {
   const s = treeS[i];
   const sway = Math.sin(t * 1.1 + treePhase[i]) * 0.03 * windAmp();
-  const count = treeCones[i];
   for (let k = 0; k < 3; k++) {
-    const mesh = treeConeMeshes[k];
-    if (k < count) {
-      _obj.position.set(treeX[i], treeY[i] + (1.15 + 0.78 * k) * s, treeZ[i]);
-      _obj.rotation.set(
-        treeLeanXA[i] * 0.5 + sway,
-        treeYawA[i],
-        treeLeanZA[i] * 0.5 + sway * 0.8,
-      );
-      const cr = (1.35 - 0.36 * k) * s;
-      const ch = (1.5 - 0.28 * k) * s;
-      _obj.scale.set(cr, ch, cr);
-    } else {
-      _obj.position.set(0, 0, 0); // keep unused layers hidden
-      _obj.rotation.set(0, 0, 0);
-      _obj.scale.set(0, 0, 0);
-    }
+    const r = coneRoute ? coneRoute[k][i] : null;
+    if (!r) continue;
+    _obj.position.set(treeX[i], treeY[i] + (1.15 + 0.78 * k) * s, treeZ[i]);
+    _obj.rotation.set(
+      treeLeanXA[i] * 0.5 + sway,
+      treeYawA[i],
+      treeLeanZA[i] * 0.5 + sway * 0.8,
+    );
+    const cr = (1.35 - 0.36 * k) * s;
+    const ch = (1.5 - 0.28 * k) * s;
+    _obj.scale.set(cr, ch, cr);
     _obj.updateMatrix();
-    mesh.setMatrixAt(i, _obj.matrix);
+    r.mesh.setMatrixAt(r.idx, _obj.matrix);
+    _touchedCones.add(r.mesh);
   }
 }
 
 // Round-robin canopy sway: a few trees per frame, matrices mutated in place.
+// Only the cell batches actually touched this frame get flagged for upload.
 function updateTreeSway(t) {
-  if (!treeConeMeshes || treePlaced === 0) return;
+  if (!coneRoute || treePlaced === 0) return;
+  _touchedCones.clear();
   const end = Math.min(treePlaced, treeCursor + TREE_SWAY_BATCH);
   for (let i = treeCursor; i < end; i++) composeTreeCanopy(i, t);
   if (end > treeCursor) {
     treeCursor = end === treePlaced ? 0 : end;
-    for (let k = 0; k < treeConeMeshes.length; k++) {
-      treeConeMeshes[k].instanceMatrix.needsUpdate = true;
-    }
+    for (const mesh of _touchedCones) mesh.instanceMatrix.needsUpdate = true;
   }
 }
 
@@ -887,8 +960,10 @@ function buildGroundcover(rng, target) {
     color: 0xffffff, flatShading: true, vertexColors: true,
   });
   addGroundcoverWind(mat);
-  const mesh = makeInstanced(groundcoverTuftGeometry(), mat, target, false, false);
-  mesh.receiveShadow = false;
+  // Wave D: stage placements, then split into per-cell batches (see header).
+  // The GPU wind shader keys off each instance's own world position, so it
+  // behaves identically across cell-local buffers.
+  const items = [];
   let placed = 0;
   let guard = 0;
   while (placed < target && guard++ < target * 20) {
@@ -907,17 +982,16 @@ function buildGroundcover(rng, target) {
     _obj.rotation.set(0, rng() * Math.PI * 2, 0);
     _obj.scale.setScalar(randRange(rng, 0.7, 1.6));
     _obj.updateMatrix();
-    mesh.setMatrixAt(placed, _obj.matrix);
     // Green jitter, darker on the forest floor, drier/greyer on highland.
     _col.setHex(0xffffff).multiplyScalar(randRange(rng, 0.8, 1.12));
     _col.lerp(_FOREST_LEAF.clone().multiplyScalar(1.4), _biome.forest * 0.4);
     _col.lerp(_HIGHLAND_BLADE, _biome.highland * 0.5);
-    mesh.setColorAt(placed, _col);
+    items.push({ m: _obj.matrix.clone(), c: _col.clone() });
     placed++;
   }
-  // Hide any unfilled tail slots.
-  for (let i = placed; i < target; i++) mesh.setMatrixAt(i, ZERO_MATRIX);
-  flushInstances(mesh);
+  // Unfilled tail slots are dropped rather than zero-scaled: they drew nothing
+  // before either, and per-cell buffers size themselves to real content.
+  installCellBatches('groundcover', groundcoverTuftGeometry(), mat, items, false);
 }
 
 // ---- public API -----------------------------------------------------------
@@ -944,6 +1018,10 @@ export function createProps() {
     return;
   }
   inited = true;
+
+  // Wave D: boot the cell manager before the builders so per-cell batches can
+  // register (idempotent; also publishes window.__IW_PERF_CELLS).
+  createCells();
 
   buildPickupAssets();
 
@@ -976,6 +1054,10 @@ export function createProps() {
 export function updateProps(dt) {
   if (!inited) return;
   const t = G.elapsed;
+  // Wave D: stream cell visibility around the player. Guards itself when the
+  // cells manager or player aren't ready; until the first streamed pass every
+  // registered batch stays visible (pre-streaming parity, see cells.js).
+  if (G.player && G.player.pos) updateCells(G.player.pos, dt);
   updateGrassSway(t);
   updateTreeSway(t); // v2: wind-driven canopy sway
   updateReedSway(t); // v2: wind-driven reed sway
