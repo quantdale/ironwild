@@ -15,6 +15,15 @@ npm run build     # production build to dist/
 npm run preview   # serve the production build (http://localhost:4173)
 ```
 
+Quality gates (used in CI-style verification; see **Testing** below):
+
+```bash
+npm run lint      # eslint over sources and configs
+npm test          # vitest unit tests (deterministic game logic)
+npm run test:e2e  # builds, then drives the real game in Chromium
+npm run verify    # all of the above, in order
+```
+
 Click the start screen to begin — the game grabs pointer lock for mouse-look.
 Best played in Chrome/Edge/Firefox on desktop.
 
@@ -109,27 +118,12 @@ of it is quality-scaled: `low` disables bloom/grain/aberration entirely, `medium
 cheaper half-resolution bloom and reduced grain/aberration, `high` adds SMAA, GTAO and god
 rays — the priciest passes.
 
-V6 — a further fidelity pass aimed at a more cinematic, "AAA" look, added on top of V5's
-pipeline: a screen-space **volumetric light shaft** pass (the classic radial-sample "god ray"
-technique, aimed at the sun's live screen-space position every frame) so low sun angles
-streak visibly through tree canopies and ruins instead of just brightening the sky; an
-atmospheric **horizon haze** band in the sky dome shader (the horizon reads brighter/whiter
-than a flat two-stop gradient, matching how real atmosphere scatters more light at grazing
-elevation); a **sky-reflective water fresnel** that samples the live top/horizon sky colours
-and adds a sun glint along the reflected view ray, so the lake tracks day/night/dusk/storm
-without a second scene render; and a cinematic grade upgrade (animated film grain, edge
-chromatic aberration) layered into the existing contrast/vignette pass. Verified live at each
-step, including a real regression caught and fixed: an initial `THREE.Reflector`-based dynamic
-water reflection was scrapped after it produced a double-tonemapped colour-wash artifact and
-measured as the single most expensive pass in the pipeline (a second full-scene render) for a
-marginal gain over the cheaper sky-fresnel approach that replaced it. The god-ray pass itself
-had a real bug caught via a camera-angle sweep: projecting the sun far outside the visible
-frame made the radial sampler clamp to a single edge pixel and wash the whole screen in that
-pixel's colour (visible as a solid green cast) — fixed with an edge-distance fade before the
-pass ships any shaft. FPS was sampled per quality tier on the same machine before and after:
-`high` (now with god rays + the cinematic grade on top of V5's GTAO/SMAA/bloom) costs modestly
-more than V5's `high`, while `medium`/`low` are unchanged since the new passes are gated off
-below `high`.
+V6 fidelity pass, layered on V5's pipeline: a screen-space **volumetric light shaft** pass
+(the classic radial-sample "god ray" technique, aimed at the sun's live screen-space position
+every frame) so low sun angles streak visibly through tree canopies and ruins; an atmospheric
+**horizon haze** band in the sky dome shader; the **sky-reflective water fresnel** described
+above; and a cinematic grade upgrade (animated film grain, edge chromatic aberration). All
+new passes are gated to `high`; `medium`/`low` keep their cheaper pipelines.
 
 ## Project layout
 
@@ -144,49 +138,20 @@ src/machines/         9 machine bodies (procedural) + AI state machine
 src/systems/          save/load, hunt contracts, XP/leveling, bestiary
 src/ui/               HUD, menus/settings, focus-scan overlay, minimap, colorblind cue
 src/audio/            fully synthesized WebAudio SFX + adaptive music + ambience
+tests/unit/           vitest suites for deterministic game logic
+tests/e2e/            Playwright smoke suite driving the production build
 ARCHITECTURE.md       v1 module contracts
 ARCHITECTURE_V2.md    v2 upgrade contracts
 ARCHITECTURE_V3.md    v3 upgrade contracts
 docs/BALANCE.md       constants audit + applied balance fixes
-screenshots/          captured during automated verification
+screenshots/          canonical start-screen capture
 ```
 
-## Verification
+## Testing
 
-The game was verified end-to-end in a headless browser: boot, movement, mouse-look,
-day/night cycle, bow ballistics (body + weak-point hits with correct multipliers),
-part breaking, machine AI aggression and melee kills, player death/restart flow,
-loot drops and collection, crafting, skill purchase, medicine use, dodge i-frames,
-focus scan slow-motion, HUD bindings, and a clean production build.
-
-V3 additions (spear melee, XP/leveling, Mirefang/Monarch, contextual tips, ACES tone
-mapping) were integrated into the boot/frame-loop wiring in `src/main.js`, then verified
-live: clean console on boot, spear swing animation channel firing on `F`, XP granting and
-persisting through `G.xp`, and the XP bar/tips DOM elements present and rendering. A
-follow-up balance audit (`docs/BALANCE.md`) flagged and fixed several correctness issues,
-most notably that the Monarch boss fight was arithmetically unwinnable on a standard
-(non-fire) arrow build — the quiver cap has been raised to close that gap.
-
-V4 additions (bestiary, hide armor, difficulty modes, colorblind weak-point cue, a
-three.js/app bundle split) were each verified live: a legacy (pre-v4) save loads cleanly
-with new fields defaulting instead of erroring; a corrupted save falls back to a fresh
-start instead of crashing; a real arrow/melee kill flows through to XP gain and a bestiary
-unlock (not just a simulated bus event); armor upgrades deduct the correct hide/shard cost
-and measurably reduce damage taken (verified 0%/12%/22% at each rank); Hardened difficulty's
-damage/HP multiplier compounds correctly with the Alpha variant roll; and the colorblind
-reticle appears over weak points and disappears when toggled off. The audit also caught and
-fixed a real exploit: focus-scanning *any* machine (not just a Vantage) was granting the
-map-reveal + 2 skill point reward meant to be Vantage-only.
-
-V5 — a rendering pass toward higher visual fidelity — added the `EffectComposer` pipeline
-(GTAO, bloom, SMAA, filmic grade/vignette) and the water fresnel term described above.
-Verified live at each step: clean console boot with the full pipeline active; bloom
-confirmed (via screenshot, day and night) to make weak points read as genuine glowing
-beacons instead of flat-shaded dots; a real regression caught with a same-scene before/after
-comparison — full-strength GTAO was blacking out thin distant silhouettes (duskwings in
-flight) — and fixed by halving `blendIntensity`, re-verified to remove the artifact while
-keeping a subtle, correct contact shadow near the player; and quality-tier scaling measured
-directly (FPS sampled over 2s per tier) to confirm `low`/`medium` meaningfully cut render
-cost rather than just changing a label.
-#   i r o n w i l d  
- 
+`npm run verify` runs the full gate: lint, unit tests, then a production build driven by
+Playwright in a real browser. The E2E suite boots the game, starts a run, moves and fights,
+opens every panel, saves and continues, and asserts a clean console (no errors, no autoplay
+warnings) across the whole session. Unit tests cover the deterministic core — RNG, event bus,
+damage/weak-point math, status timing, terrain generation, XP, quests, bestiary, and save
+normalization (including corrupt-save handling).

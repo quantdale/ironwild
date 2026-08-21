@@ -9,6 +9,23 @@
 > severity, no change recommended). This file's body below is the original
 > read-only audit, kept intact for the reasoning and TTK tables behind each fix.
 
+> **Update (v4 drift pass):** the fix-up pass above plus later v4/v6 work moved
+> more numbers. Each correction below was recalculated from the current tree;
+> inline **(v4: …)** markers flag every touched row. Summary: monarch hp
+> **1400 → 1000** (`machines.js:710`) and quiver cap **40 → 60** (`state.js:78`);
+> hunterKiller ×1.3 now applies **weak-point-only** (`projectiles.js:221`) while
+> release damage is plain `22 × (0.5 + 0.5·power)` (`bow.js:181`); burn duration
+> is **power-scaled** `4 × (0.35 + 0.65·power)` ⇒ 1.56–4 s (`projectiles.js:233`);
+> duskwing self-stun **4 s → 2.5 s** (`ai.js:47`); F3's panic flee is implemented
+> (`ai.js:608-627`, flag set at `status.js:103-104`); rendclaw loot **4sh+1oil →
+> 6sh+1oil** (`machines.js:718`); carcass harvest now also yields **+1 wood
+> +1 hide** (`ai.js:1590-1604`), so wood is renewable and §4.2's hard-ceiling
+> reasoning is obsolete; v4 adds hide armor (rank 1: 4 hide + 3 shards −12%
+> dmg · rank 2: 6 hide + 6 shards −22% dmg — `menus.js:260`, `player.js:23`).
+> Recalculated boss wall: 1000 hp ≈ **40 standard arrows weak-first — fits cap
+> 60, finishable at rank 0**; a pure-fire clear needs ≈ **27 fire arrows >
+> cap 20**, inverting §7's old "only fire builds fit" conclusion.
+
 Row `balance-audit` deliverable. **No source files were edited during the original audit
 pass** (see the update note above for the later fix-up pass). Every constant below was
 extracted by reading the working tree; TTK/economy numbers were computed with a throwaway
@@ -49,12 +66,12 @@ Audited files: `src/core/state.js`, `src/machines/machines.js`, `src/machines/ai
 | Constant | Value | Location |
 |---|---|---|
 | Arrow base damage (full draw) | 22 | `state.js:23` |
-| Damage formula | `22 × (0.5 + 0.5·power) × (hunterKiller ? 1.3 : 1)` | `bow.js:181` |
+| Damage formula | `22 × (0.5 + 0.5·power) × (hunterKiller ? 1.3 : 1)` *(v4: release damage is plain `22 × (0.5 + 0.5·power)` — HK ×1.3 moved weak-point-only into the resolver, `projectiles.js:221`)* | `bow.js:181` |
 | Min-loose draw fraction | 0.15 → power 0.061 → 11.7 dmg | `bow.js:14`, `bow.js:103` |
 | Full-draw time | 0.85 s (Steady Aim ×0.65 = 0.5525 s) | `state.js:26`, `bow.js:96` |
 | Arrow speed | lerp(24, 62, power) m/s; gravity ×0.55 | `state.js:24-25`, `projectiles.js:291` |
 | Fire arrow impact mult | ×0.8 (17.6 full draw) | `projectiles.js:20` |
-| Burn | 12 dps × 4 s = 48, ticks 6 per 0.5 s, refreshed per hit, body-only (no weak mult) | `status.js:10-13`, `projectiles.js:229` |
+| Burn | 12 dps × 4 s = 48, ticks 6 per 0.5 s, refreshed per hit, body-only (no weak mult) *(v4: duration is power-scaled `4 × (0.35 + 0.65·power)` ⇒ 1.56–4 s, `projectiles.js:233`; dps/ticks/body-only unchanged)* | `status.js:10-13`, `projectiles.js:229` |
 | Stuck-arrow refund | walk-over ≤1.8 u, standard pool only, 25 s life | `projectiles.js:16-18`, `324-327` |
 | Spear (KeyF) | 26 body / 39 weak-flat, 0.8 s cd, 2.4 u ±55° cone, hits every machine in arc once, lunge 1.2 u | `spear.js:17-25` |
 | Player HP | 100 (+30 Heartier); medicine heals 45 | `player.js:19-21` |
@@ -75,7 +92,7 @@ Audited files: `src/core/state.js`, `src/machines/machines.js`, `src/machines/ai
 | bulwark | 280 | 1.15 | 3.0 | vents ×2 / 55 / 0.6 (`:417`); front ±60° cone deflects **all** hits (`machines.js:933-939`) |
 | vantage | 160 | 1.0 | 2.0 | uplink ×2 / 50 / 0.34 (`:459`) — peaceful, never fights |
 | mirefang | 110 | 1.2 | 4.5 | eye ×2.2 / 35 / 0.34 (`:511`), bellyseam ×1.6 / 50 / 0.55 (`:549`) |
-| monarch | 1400 | 3.2 | 2.4 | furnace ×1.5 / 220 / 0.95 (`:592`), kneeL/R ×1.8 / 70 ea / 0.55 (`:675`) |
+| monarch | 1400 *(v4: 1000, `machines.js:710`)* | 3.2 | 2.4 | furnace ×1.5 / 220 / 0.95 (`:592`), kneeL/R ×1.8 / 70 ea / 0.55 (`:675`) |
 
 Alpha variant (`machines.js:976-981`): +60 % hp, outgoing dmg ×1.25, double loot, 15 % seeded
 roll (`ai.js:1767`; monarch excluded). Part break ⇒ stagger 1.2 s. Mechanic note: a broken
@@ -92,7 +109,7 @@ weak point stops receiving multiplier — later hits there are plain body hits
 | rendclaw | claw combo (`:775`,`:783`,`:792`) | 15 ×2 | 0.30 s windup | cd 2.2 s; cycle ≈ 3.2 s | both strikes land if dist < 2.6; neckcord-broken halves dmg |
 | ironmaw | charge (`:851`,`:869`) | 30 | 0.8 s roar | cd 6 s; dash 16 u/s ≤ 1.1 s | disabled when core broken (speed −30 %, `:838`) |
 | ironmaw | spark bolt (`:883`, `:1436`) | 14 | 0.6 s glow | boltCd 1.8 s; 26 m/s, r 0.9 hit sphere | only 12–30 u while charge on cd |
-| duskwing | dive (`:46-49`, `:949`) | 18 | 0.85 s shadow mark | climb-lock 6 s + cd; cycle ≈ 12.6 s | marks where you stood; then grounded stagger **4 s** |
+| duskwing | dive (`:46-49`, `:949`) | 18 | 0.85 s shadow mark | climb-lock 6 s + cd; cycle ≈ 12.6 s | marks where you stood; then grounded stagger **4 s** *(v4: 2.5 s — `DUSKWING_STUN`, `ai.js:47`; cycle ≈ 11.1 s)* |
 | bulwark | roll (`:52-54`) | 22 | 0.7 s quake | rollCd 7 s; 13 u/s ≤ 1.1 s | disabled when vents broken |
 | bulwark | crush | 14 | 0.5 s rear-up | cd 3 s | dist < 3.4 |
 | mirefang | ambush lunge (`:1113`) | 20 | submerged (nostril tell) | cd 2.5–3 s | swimmers within 14 u |
@@ -113,9 +130,9 @@ Income:
 | Source | Yield | Location |
 |---|---|---|
 | World pickups (one-time) | wood 26, shards 20, medicine 8 — 1 unit each (Scavenger ×2) | `props.js:27`, `:898` |
-| Loot per kill | skitter 2sh · bramblehorn 3sh+2oil · rendclaw 4sh+1oil · ironmaw 10sh+3oil · duskwing 4sh+2oil · bulwark 7sh+3oil · vantage 6sh+2oil · mirefang 5sh+2oil · monarch 40sh+12oil+3med | `machines.js:707-716` |
-| Corpse harvest (any corpse, 1.2 s hold) | +3 shards +1 oil (Scavenger ×2) | `ai.js:1525-1526` |
-| Quest rewards | hunt → +1 SP · gather → +6 shards · scanVantage → +1 medicine | `quests.js:23-27` |
+| Loot per kill | skitter 2sh · bramblehorn 3sh+2oil · rendclaw 4sh+1oil *(v4: **6sh+1oil**, `machines.js:718`)* · ironmaw 10sh+3oil · duskwing 4sh+2oil · bulwark 7sh+3oil · vantage 6sh+2oil · mirefang 5sh+2oil · monarch 40sh+12oil+3med | `machines.js:707-716` |
+| Corpse harvest (any corpse, 1.2 s hold) | +3 shards +1 oil (Scavenger ×2) *(v4: also **+1 wood +1 hide** — `ai.js:1590-1604`)* | `ai.js:1525-1526` |
+| Quest rewards | hunt → +1 SP · gather → +6 shards · scanVantage → +1 medicine *(v4: ironmaw hunts pay **+1 bonus SP**, F7)* | `quests.js:23-27` |
 | Vantage first scan | map reveal + 2 SP (once per vantage) | `ai.js:1577` |
 | Level-up (v3) | +1 SP | `xp.js:62` |
 | XP | kills 20/30/45/80/60/70/55/500 (alpha ×1.5), pickup +5, scan +15 | `xp.js:11-23` |
@@ -124,9 +141,10 @@ Costs / sinks (`menus.js:203-237`, `state.js:72-82`):
 
 | Craft | Cost | Output |
 |---|---|---|
-| Arrows | 1 wood + 2 shards | 5 (cap 40) |
+| Arrows | 1 wood + 2 shards | 5 (cap 40) *(v4: cap **60**, `state.js:78`)* |
 | Medicine | 2 oil + 1 wood | 1 |
 | Fire arrows | 2 oil + 3 shards | 5 (cap 20) |
+| Hide armor (v4) | rank 1: 4 hide + 3 shards · rank 2: 6 hide + 6 shards (one-time per rank; income 1 hide/harvest) | −12% / −22% incoming dmg (`menus.js:260`, `player.js:23`) |
 
 Start inventory: 20 arrows, 8 wood, 2 medicine, 1 SP, 0 shards/oil/fire.
 Quest sizing: hunt 2–4 of {skitter, bramblehorn, rendclaw, ironmaw}, gather 4–8, refill 20 s
@@ -152,7 +170,7 @@ longer. Seconds ≈ shots × 1.25 (e.g. 13 ar ≈ 16.3 s).
 | bulwark 280 | 13/11/11 | 10/9/9 | 9/8/8 | 8/7/7 | 11/10 | 19 ar |
 | vantage 160 | 8/6/6 | 6/5/5 | 6/4/4 | 5/4/4 | 7/6 | 10 ar |
 | mirefang 110 | 5/3/4 | 4/3/3 | 4/3/3 | 3/2/3 | 5/3 | 6 ar |
-| monarch 1400 | 64/**57**/57 | 49/**43**/43 | 44/**38**/38 | 38/**33**/33 | 54/49 | 96 ar |
+| monarch 1400 *(v4: 1000)* | 64/**57**/57 | 49/**43**/43 | 44/**38**/38 | 38/**33**/33 | 54/49 | 96 ar |
 
 Read-outs:
 
@@ -164,6 +182,9 @@ Read-outs:
 - Fire arrows beat standard on everything that survives ≥ ~2 s (burn adds 48 body dmg);
   they lose raw burst only on sub-2-shot kills.
 - Monarch row drives F8: 57 standard arrows > quiver cap 40. Only fire builds (38/33) fit.
+  *(v4, at hp 1000 / cap 60: ≈ 40 standard arrows weak-first — fits the quiver, boss is
+  finishable at rank 0; a pure-fire clear needs ≈ 27 fire arrows > cap 20, so the
+  "only fire fits" conclusion now runs the other way.)*
 
 ## 3. TTK — machines killing the player
 
@@ -211,12 +232,12 @@ Active-defense reality check:
 | duskwing | 4+3=7 | 15 | 3 | +12 |
 | bulwark | 7+3=10 | 20 | 11 | +9 |
 | mirefang | 5+3=8 | 15 | 3 | +12 |
-| monarch | 40+3=43 | 40 (cap) | 57 | **−17 and capped** |
+| monarch | 40+3=43 | 40 (cap) | 57 | **−17 and capped** *(v4: hp 1000 ⇒ ~40 spent, cap 60 — net positive and finishable)* |
 
 Every hunt is arrow-positive except the monarch, which is impossible on standard ammo (F8).
 Stuck-arrow walk-over refunds push nets further positive for missed shots.
 
-### 4.2 Wood ledger — the hard ceiling (F5)
+### 4.2 Wood ledger — the hard ceiling (F5) *(v4: ceiling removed, see note below)*
 
 Wood enters the inventory exactly two ways: 8 at start + 26 world pickups (`props.js:27`).
 Nothing else grants wood — not loot tables, not harvest (`ai.js:1525-1526`), not quests
@@ -227,11 +248,17 @@ Nothing else grants wood — not loot tables, not harvest (`ai.js:1525-1526`), n
 - Machines respawn every 90 s (240 alpha) — shards/oil income is infinite, wood is not.
   After ~30–60 minutes the crafting economy silently dead-ends.
 
+*(v4: F5 was applied — `completeHarvest` now grants **+1 wood per carcass**
+(`ai.js:1594`), so wood renews at roughly one unit per kill against a ~0.2/kill
+crafting spend. The "34 ever / economy dead-ends" reasoning above no longer
+holds; medicine-vs-ammo competition is effectively gone.)*
+
 ### 4.3 Medicine sustainability
 
 Heal 45/use. Typical hunt damage taken 30–60 ⇒ ~1 medicine per 1–2 hunts. Oil income is
 healthy (bramblehorn 2, harvest 1, ironmaw/bulwark 3 per kill), so oil never binds; **wood**
-does (34 medicines max ever, competing with arrows). The scanVantage contract (+1 medicine,
+does (34 medicines max ever, competing with arrows) *(v4: no longer binding — harvest
+grants wood, see §4.2)*. The scanVantage contract (+1 medicine,
 re-roll every refill at 15 %) is the only renewable medicine line (F12).
 
 ### 4.4 Shard faucets vs sinks
@@ -250,6 +277,12 @@ does not scale with draw (F4): a threshold-tap fire arrow (draw 0.15, 0.13 s to 
 9.3 impact + 48 burn = **57.3 effective**, i.e. 87 % of a full-power fire arrow for 15 % of
 the draw time. Tap-spamming fire arrows is the dominant ranged strategy once oiled; the
 simmed fire-R0 column above actually *understates* this (it assumes full draws).
+
+*(v4: F4 was applied — burn duration scales as `4 × (0.35 + 0.65·power)`
+(`projectiles.js:233`), so the same threshold tap now lands 9.3 impact +
+≈ 18.7 burn (1.56 s window at power 0.061) = **≈ 28 effective**, about 43 % of
+a full-power fire arrow's 65.6. Tap-spam is no longer dominant; full draws win
+on every target that survives the draw time.)*
 
 ## 5. XP curve sanity (`xp.js:29`: next = round(100 × level^1.35))
 
@@ -285,6 +318,8 @@ simmed fire-R0 column above actually *understates* this (it assumes full draws).
 - **F3 — panic flag unread.** `status.js:103-104` sets `m.panic/m.panicT` "consumed by
   machines/ai.js"; ai.js contains zero reads (grep verified). Burning machines fight
   unimpeded; the v2 doc's flee-briefly behavior never happens.
+  *(v4: implemented — `panicFlee` runs for skitter/rendclaw/ironmaw/bulwark between
+  attacks while burning, `ai.js:608-627`.)*
 - **F4 — burn ignores draw power.** `applyBurn(machine, BURN_DURATION)` fixed 4 s regardless
   of `power`. See §4.5 for the exploit math.
 - **F5 — wood non-renewable.** See §4.2. Highest-impact economy fix available.
@@ -301,6 +336,7 @@ simmed fire-R0 column above actually *understates* this (it assumes full draws).
 - **F9 — duskwing self-stun.** `DUSKWING_STUN = 4` (`ai.js:47`) grounds it beside the player
   with `staggerTimer` (no actions, no movement) every ~12.6 s cycle; three aimed shots fit
   easily in the window (≈ 66–120 dmg of its 110 hp). Generous to the point of scripted.
+  *(v4: applied — `DUSKWING_STUN = 2.5`, window ≈ two aimed shots, cycle ≈ 11.1 s.)*
 - **F10 — spear/optic near-miss.** `DMG_WEAK = 39` (`spear.js:20`) vs skitter optic 40 hp:
   leaves the part at 1 hp, breaking on the second swing instead of the first. One-point fix.
   Consistency positive: the bulwark front cone deflects spear hits too (position-based check
