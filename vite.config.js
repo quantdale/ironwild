@@ -13,4 +13,13 @@ export default defineConfig({
       },
     },
   },
+  // Vitest (npm test): deterministic logic tests run in plain node; the
+  // setup file stubs just enough browser surface for modules that touch
+  // window/localStorage at import time. WebGL-dependent code is covered by
+  // the Playwright suite instead (npm run test:e2e).
+  test: {
+    environment: 'node',
+    include: ['tests/unit/**/*.test.js'],
+    setupFiles: ['tests/setup.dom.js'],
+  },
 });
