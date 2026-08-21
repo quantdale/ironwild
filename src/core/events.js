@@ -61,3 +61,14 @@ export const bus = {
 //   'meleeSwing'     { hit:boolean }                     - player/spear.js on attack
 // v4 additions:
 //   'bestiaryUnlock' { type:string, kind:'seen'|'killed' } - systems/bestiary.js new entry
+// v5 additions (upgrade-campaign cross-system contracts):
+//   'impact'        { pos:Vector3, material:'metal'|'stone'|'soil'|'wood'|'water',
+//                     dir?:Vector3, strength?:number }  - combat/projectiles.js classifies
+//                     every projectile hit; vfx/library.js + audio/audio.js present it
+//   'bowState'      { state:'idle'|'drawing'|'full'|'release', power:0..1 } - player/bow.js FSM
+//   'hitstop'       { duration:number, scale?:number } - player/spear.js requests a global
+//                     time dilation; main.js owns the G.timeScale composition
+//   'animEvent'     { name:string, data?:any, source? } - anim/events.js timeline crossings
+//   'footstep'      { surface:string, running:boolean } - surface-classified step cue
+//   'machineDamaged'{ machine, tier:1|2 } - combat/damage.js once per hp threshold
+//                     crossing (0.5/0.25); vfx plumes + audio stress beds attach on it

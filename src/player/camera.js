@@ -28,6 +28,14 @@ const GROUND_MARGIN = 0.4;     // camera never dips below ground + this
 const MARCH_STEPS = 8;         // collision samples along the boom
 const SHAKE_UNITS = 0.28;      // max positional shake offset (m) at amp 1
 const PIVOT_CROUCH_DROP = 0.5; // pivot lowers by this when fully crouched
+const PAD_LOOK_SPEED = 3.0;    // v5: right-stick look rate (rad/s at full deflection)
+
+/** v5 a11y: live camera-shake scale (0..1) from ui/a11y.js; absent = full shake. */
+function shakeScale() {
+  const a = typeof window !== 'undefined' ? window.__IW_A11Y : null;
+  const s = a && typeof a.camShakeScale === 'number' ? a.camShakeScale : 1;
+  return s < 0 ? 0 : s > 1 ? 1 : s;
+}
 
 // Module-scope temps - reused every frame, no per-frame allocations.
 const _pivot = new THREE.Vector3();
@@ -107,9 +115,23 @@ export function updateCamera(dt) {
     const pitchDelta = mdy * sens * (G.settings && G.settings.invertY ? -1 : 1);
     cam.pitch = clamp(cam.pitch - pitchDelta, PITCH_MIN, PITCH_MAX);
   }
-  // v2: aiming is suppressed while swimming - no bow attacks in deep water
-  // (bow.js gates its draw/release on G.cam.aiming).
-  cam.aiming = control && _rmbDown && !(G.player && G.player.swimming);
+  // v5: gamepad right-stick look (Wave J input layer). Independent of pointer
+  // lock - a pad must stay usable when the browser never granted lock. Axes
+  // arrive in movementX/Y convention (right = +x, up = -y), so the pitch math
+  // mirrors the mouse path exactly; PAD_LOOK_SPEED converts to rad/frame via dt.
+  if (G.started && !G.paused && typeof Input.getLookAxes === 'function') {
+    const look = Input.getLookAxes();
+    if (look && (look.x !== 0 || look.y !== 0)) {
+      const padRate = PAD_LOOK_SPEED * (G.settings ? G.settings.sens : 1) * dt;
+      cam.yaw -= look.x * padRate;
+      const pdy = look.y * padRate * (G.settings && G.settings.invertY ? -1 : 1);
+      cam.pitch = clamp(cam.pitch - pdy, PITCH_MIN, PITCH_MAX);
+    }
+  }
+  // v5: aim also engages from the action layer (gamepad RT / rebound keys),
+  // not just the physical right mouse button. Swimming still suppresses it.
+  const padAim = typeof Input.isAction === 'function' && Input.isAction('aim');
+  cam.aiming = control && (_rmbDown || padAim) && !(G.player && G.player.swimming);
 
   // --- basis from yaw/pitch (yaw 0 faces -Z, positive pitch looks up) ---
   const cosP = Math.cos(cam.pitch);
@@ -178,7 +200,8 @@ export function updateCamera(dt) {
   if (_shakeLeft > 0) {
     _shakeLeft -= dt;
     const k = Math.max(_shakeLeft, 0) / _shakeDur; // linear amp decay
-    const s = _shakeAmp * k * SHAKE_UNITS;
+    // v5: scaled by the accessibility camShakeScale (0 disables entirely).
+    const s = _shakeAmp * k * SHAKE_UNITS * shakeScale();
     _shakePhase += dt * 43;
     G.camera.position.x += Math.sin(_shakePhase * 1.7) * s;
     G.camera.position.y += Math.cos(_shakePhase * 2.3) * s * 0.8;

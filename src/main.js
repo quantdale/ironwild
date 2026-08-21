@@ -47,6 +47,15 @@ import * as focusMod from './ui/focus.js';
 import * as tipsMod from './ui/tips.js';
 import * as weakCueMod from './ui/weakcue.js';
 import * as audioMod from './audio/audio.js';
+// v5 upgrade-campaign systems (waves A-H,J): telemetry, dynamic resolution,
+// asset pipeline, environment lighting, VFX, machine animators, accessibility.
+import * as perfMod from './systems/perf.js';
+import * as dynresMod from './systems/dynres.js';
+import * as assetsMod from './systems/assets.js';
+import * as lightingMod from './render/lighting.js';
+import * as vfxMod from './vfx/library.js';
+import * as animMod from './anim/machineAnim.js';
+import * as a11yMod from './ui/a11y.js';
 
 // ------------------------------------------------------------------ glue helpers
 
@@ -282,6 +291,11 @@ function applyQuality() {
   godraysEnabled = preset.godrays;
   if (godrayPass) godrayPass.enabled = preset.godrays;
   cinematicAmt = preset.cinematic;
+  // v5: the dynamic-resolution controller re-reads base pixel ratio + bounds
+  // for the new tier (it owns renderer/composer pixel ratio from here on).
+  if (dynresMod && typeof dynresMod.onQualityChanged === 'function') {
+    dynresMod.onQualityChanged();
+  }
 }
 
 /**
@@ -426,10 +440,49 @@ function boot() {
   requireFn(terrainMod, 'createTerrain', 'world/terrain.js')();
   requireFn(environmentMod, 'createEnvironment', 'world/environment.js')();
 
+  // v5 (wave C): PMREM/IBL environment lighting built from a procedural sky
+  // matched to environment.js's palette. Idempotent, never throws, never
+  // replaces existing lights/background; per-frame intensity modulation is
+  // ticked in the frame loop below.
+  try {
+    if (typeof lightingMod.initEnvironmentLighting === 'function') {
+      lightingMod.initEnvironmentLighting();
+    }
+  } catch (err) {
+    console.error('[main] initEnvironmentLighting failed:', err);
+  }
+
   // Weather owns G.weather; environment/terrain/props only read it. Lights now
   // exist, so apply the persisted quality preset once at boot.
   requireFn(weatherMod, 'createWeather', 'world/weather.js')();
   applyQuality();
+
+  // v5 (wave B): asset pipeline loaders (GLTF/KTX2/meshopt; Draco on demand).
+  // No authored GLBs exist yet - manifest entries are placeholders - so this
+  // only constructs loaders and validates the manifest. Publishing the
+  // instantiate bridge in the GLTF-style shape anim/machineAnim.js expects
+  // ({scene, animations}) lets authored machines upgrade themselves later
+  // without touching this file again.
+  try {
+    if (typeof assetsMod.initAssets === 'function') {
+      const summary = assetsMod.initAssets({ renderer });
+      console.info('[main] asset pipeline:', summary);
+    }
+    if (typeof window !== 'undefined' && typeof assetsMod.instantiate === 'function') {
+      window.__IW_ASSETS = {
+        instantiate: (id, opts) => assetsMod.instantiate(id, opts).then((obj) => ({
+          scene: obj,
+          animations:
+            obj && obj.userData && obj.userData.clips
+              ? Object.values(obj.userData.clips)
+              : [],
+        })),
+        load: assetsMod.load,
+      };
+    }
+  } catch (err) {
+    console.error('[main] asset pipeline init failed:', err);
+  }
 
   requireFn(propsMod, 'createProps', 'world/props.js')();
   requireFn(playerMod, 'createPlayer', 'player/player.js')();
@@ -477,6 +530,23 @@ function boot() {
   requireFn(tipsMod, 'createTips', 'ui/tips.js')();
   requireFn(audioMod, 'initAudio', 'audio/audio.js')();
 
+  // v5: accessibility applier (Wave J) - reads persisted a11y settings and
+  // publishes window.__IW_A11Y for consumers (camera shake lives there now).
+  requireFn(a11yMod, 'createA11y', 'ui/a11y.js')();
+  // v5 (wave H): pooled VFX engine + named effect library; bus-driven, so
+  // boot order only matters for G.scene (it lazy-inits until the scene exists).
+  try {
+    requireFn(vfxMod, 'createVfx', 'vfx/library.js')();
+  } catch (err) {
+    console.error('[main] createVfx failed:', err);
+  }
+  // v5 (wave A): telemetry HUD (F3) + bounded dynamic-resolution controller.
+  requireFn(perfMod, 'createPerf', 'systems/perf.js')();
+  requireFn(dynresMod, 'createDynRes', 'systems/dynres.js')();
+  if (typeof dynresMod.setContext === 'function') {
+    dynresMod.setContext({ renderer, composer });
+  }
+
   // --- per-frame steps ------------------------------------------------------------
 
   // Player/bow/camera accept either documented shape: module-level update fn or
@@ -513,24 +583,61 @@ function boot() {
   // Audio is bus-driven; a per-frame hook is optional.
   const audioStep = typeof audioMod.updateAudio === 'function' ? audioMod.updateAudio : null;
 
+  // v5 campaign steps. perf/dynres tick every frame (telemetry + resolution
+  // control run even on the start screen); envLight modulates IBL intensity
+  // from weather; vfx/animators tick with scaled gameplay dt.
+  const perfStep = requireFn(perfMod, 'updatePerf', 'systems/perf.js');
+  const dynresStep = requireFn(dynresMod, 'updateDynRes', 'systems/dynres.js');
+  const envLightStep = typeof lightingMod.updateEnvironmentLighting === 'function'
+    ? lightingMod.updateEnvironmentLighting
+    : null;
+  const vfxStep = requireFn(vfxMod, 'updateVfx', 'vfx/library.js');
+  // Machine animators (wave E): one line after the machines tick, as designed.
+  const animatorsStep = requireFn(animMod, 'updateMachineAnimators', 'anim/machineAnim.js');
+
   // --- frame loop -----------------------------------------------------------------
+
+  // v5: spear/combat hitstop (wave F emits 'hitstop'; main owns time). The dip
+  // MULTIPLIES G.timeScale instead of overwriting it, so focus-scan dilation
+  // composes and nothing fights over ownership of G.timeScale. Short cap so a
+  // burst of events cannot freeze the frame for long.
+  let _hitstopLeft = 0;
+  let _hitstopScale = 1;
+  bus.on('hitstop', (e) => {
+    const dur = e && typeof e.duration === 'number' ? e.duration : 0.06;
+    _hitstopLeft = Math.min(Math.max(dur, 0), 0.35);
+    const sc = e && typeof e.scale === 'number' ? e.scale : 0.25;
+    _hitstopScale = Math.min(Math.max(sc, 0), 1);
+  });
 
   const clock = new THREE.Clock();
   renderer.setAnimationLoop(() => {
     const rawDt = clamp(clock.getDelta(), 0, 0.05);
     Input.beginFrame();
+    perfStep(rawDt); // telemetry first: this frame's dt is the sample
+    dynresStep(rawDt); // bounded render-scale control (3D only)
+    if (envLightStep) envLightStep(rawDt);
     updatePostFX(rawDt);
+    // Hitstop countdown runs on raw time so it always recovers.
+    let hsScale = 1;
+    if (_hitstopLeft > 0) {
+      _hitstopLeft -= rawDt;
+      hsScale = _hitstopScale;
+    }
+    perfMod.beginMark('sim');
     if (G.started && !G.paused && !G.gameOver) {
-      const dt = rawDt * G.timeScale;
+      const dt = rawDt * G.timeScale * hsScale;
       G.elapsed += dt;
       if (cameraStep) cameraStep(dt);
       if (playerStep) playerStep(dt);
       if (bowStep) bowStep(dt);
       spearStep(dt);
       machinesStep(dt);
+      animatorsStep(dt); // v5: tick attached machine animators (procedural-safe)
       projectilesStep(dt);
       damageStep(dt);
       statusStep(dt); // burn DoT after damage FX, before AI reads panic flags
+      vfxStep(dt); // v5: pooled VFX after combat FX, same scaled clock
       propsStep(dt);
       weatherStep(dt);
       envStep(dt);
@@ -549,6 +656,7 @@ function boot() {
       hudStep(rawDt);
       menusStep();
     }
+    perfMod.endMark('sim');
 
     // Audio expects a tick every frame (it gates its audible layers on game
     // state itself). The save tick keeps running through pause so updateSave's
@@ -560,7 +668,9 @@ function boot() {
     // One-shot key presses were polled by the systems above; clear them now.
     Input.endFrame();
 
+    perfMod.beginMark('render-submit');
     composer.render();
+    perfMod.endMark('render-submit');
   });
 
   // --- global handlers ------------------------------------------------------------
