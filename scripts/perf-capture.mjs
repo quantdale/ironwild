@@ -23,9 +23,14 @@ import { chromium } from "@playwright/test";
 
 const BASE = "http://localhost:4173";
 const SOAK = process.argv.includes("--soak");
+// Accept both "--soak-mins 20" and "--soak-mins=20".
+const eqMins = process.argv.find((a) => a.startsWith("--soak-mins="));
 const soakMinsIdx = process.argv.indexOf("--soak-mins");
-const SOAK_MINUTES =
-  soakMinsIdx >= 0 ? Number(process.argv[soakMinsIdx + 1]) || 1.5 : 1.5;
+const SOAK_MINUTES = eqMins
+  ? Number(eqMins.split("=")[1]) || 1.5
+  : soakMinsIdx >= 0
+    ? Number(process.argv[soakMinsIdx + 1]) || 1.5
+    : 1.5;
 
 // Same launch contract as playwright.config.js IW_E2E_GPU=1.
 const LAUNCH_ARGS =
@@ -195,7 +200,7 @@ if (SOAK) {
     heapMB: last.heapMB - first.heapMB,
     geometries: last.geo - first.geo,
     textures: last.tex - first.tex,
-    programs: last.prog - last.prog,
+    programs: last.prog - first.prog,
     machines: last.machines - first.machines,
     cells: last.cells && first.cells ? `${last.cells} vs ${first.cells}` : null,
   };
