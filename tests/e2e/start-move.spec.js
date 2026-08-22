@@ -3,7 +3,13 @@
 // camera yaw in BOTH control modes (pointer lock engaged, or the game's
 // free-cursor fallback after lock denial). Never asserts pointerLockElement.
 import { expect, test } from "@playwright/test";
-import { playerPos, startGame, waitControlSettled } from "./helpers.js";
+import {
+ playerPos,
+ startGame,
+ SWGL_POLL_MS,
+ SWGL_SPEC_MS,
+ waitControlSettled,
+} from "./helpers.js";
 
 /**
  * Hold a movement key until the player has actually moved `delta` units
@@ -11,7 +17,7 @@ import { playerPos, startGame, waitControlSettled } from "./helpers.js";
  * or two frames; under software GL the poll simply waits longer instead of a
  * fixed wall-clock hold guessing how far N milliseconds should move you.
  */
-async function holdUntilMoved(page, code, from, delta, timeout = 60_000) {
+async function holdUntilMoved(page, code, from, delta, timeout = SWGL_POLL_MS) {
  await page.keyboard.down(code);
  try {
   await expect
@@ -44,7 +50,7 @@ test("start screen click begins the run and shows the HUD", async ({
 });
 
 test("WASD moves: W forward, A/D strafe", async ({ page }) => {
- test.setTimeout(120_000); // software GL: polls wait on real displacement
+ test.setTimeout(SWGL_SPEC_MS); // starved-host ceiling: three displacement polls + boot
  await startGame(page);
  await waitControlSettled(page);
 
@@ -85,8 +91,9 @@ test("mouse movement steers the camera yaw (locked or fallback)", async ({
  await page.mouse.move(340, 420, { steps: 8 });
 
  await expect
-  .poll(() =>
-   page.evaluate((y0) => Math.abs(window.__IW.G.cam.yaw - y0), yawBefore),
+  .poll(
+   () => page.evaluate((y0) => Math.abs(window.__IW.G.cam.yaw - y0), yawBefore),
+   { timeout: SWGL_POLL_MS }, // mouse deltas land on the next sim frame
   )
   .toBeGreaterThan(0.05);
 

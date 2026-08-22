@@ -1,11 +1,19 @@
 // Quicksave / Continue: KeyP writes the 'ironwild-save' slot, a reload shows
 // the CONTINUE button, and continuing restores the saved position.
 import { expect, test } from "@playwright/test";
-import { playerPos, startGame, tapKey } from "./helpers.js";
+import {
+  playerPos,
+  startGame,
+  SWGL_POLL_MS,
+  SWGL_SPEC_MS,
+  tapKey,
+} from "./helpers.js";
 
 function dist(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 }
+
+test.setTimeout(SWGL_SPEC_MS); // starved-host ceiling; hardware exits in seconds
 
 test("KeyP quicksave -> reload -> Continue restores position", async ({
   page,
@@ -25,7 +33,7 @@ test("KeyP quicksave -> reload -> Continue restores position", async ({
         const p = await playerPos(page);
         return Math.hypot(p.x - spawnPos.x, p.z - spawnPos.z);
       },
-      { timeout: 60_000 },
+      { timeout: SWGL_POLL_MS },
     )
     .toBeGreaterThan(6);
   await page.keyboard.up("KeyW");
@@ -33,7 +41,10 @@ test("KeyP quicksave -> reload -> Continue restores position", async ({
   await tapKey(page, "KeyP"); // manual quicksave (src/systems/save.js updateSave)
 
   await expect
-    .poll(() => page.evaluate(() => !!localStorage.getItem("ironwild-save")))
+    .poll(
+      () => page.evaluate(() => !!localStorage.getItem("ironwild-save")),
+      { timeout: SWGL_POLL_MS }, // save write lands on the next sim frame
+    )
     .toBe(true);
 
   const saved = await page.evaluate(() =>
@@ -49,11 +60,13 @@ test("KeyP quicksave -> reload -> Continue restores position", async ({
     () => !!(window.__IW && window.__IW.G && window.__IW.G.player),
   );
   const continueBtn = page.locator("#iw-continue");
-  await expect(continueBtn).toBeVisible();
+  await expect(continueBtn).toBeVisible({ timeout: SWGL_POLL_MS });
 
   await continueBtn.click();
   await expect
-    .poll(() => page.evaluate(() => window.__IW.G.started))
+    .poll(() => page.evaluate(() => window.__IW.G.started), {
+      timeout: SWGL_POLL_MS,
+    })
     .toBe(true);
 
   // loadGame() applies the saved position synchronously inside the click

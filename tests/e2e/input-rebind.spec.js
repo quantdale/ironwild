@@ -6,15 +6,15 @@
 // jump arc (~0.75s game time) can take tens of seconds of wall clock - every
 // airborne->grounded wait gets a generous budget.
 import { expect, test } from "@playwright/test";
-import { startGame, tapKey } from "./helpers.js";
+import { startGame, SWGL_POLL_MS, SWGL_SPEC_MS, tapKey } from "./helpers.js";
 
-test.setTimeout(240_000);
+test.setTimeout(SWGL_SPEC_MS); // starved-host ceiling (was 240s: pre-evidence guess)
 
 /** Poll until the player is grounded again (landing) with a long budget. */
 async function waitLanded(page) {
   await expect
     .poll(() => page.evaluate(() => window.__IW.G.player.grounded), {
-      timeout: 120_000,
+      timeout: SWGL_POLL_MS,
     })
     .toBe(true);
   await page.waitForTimeout(200); // let the pressed-edge clear

@@ -4,7 +4,7 @@
 // - live settingsChanged updates reach consumers without reload;
 // - every spawned machine owns exactly one animator; death disposes it.
 import { expect, test } from "@playwright/test";
-import { gotoGame, startGame } from "./helpers.js";
+import { gotoGame, startGame, SWGL_POLL_MS, SWGL_SPEC_MS } from "./helpers.js";
 
 test("persisted a11y settings apply through boot and update live", async ({
   page,
@@ -57,7 +57,7 @@ test("persisted a11y settings apply through boot and update live", async ({
 test("every live machine has exactly one animator; death disposes it", async ({
   page,
 }) => {
-  test.setTimeout(200_000); // software GL: each simulated frame costs real seconds
+  test.setTimeout(SWGL_SPEC_MS); // starved-host ceiling (was 200s: pre-evidence guess)
   await startGame(page);
   await page.waitForTimeout(1000); // world population settled
 
@@ -119,7 +119,7 @@ test("every live machine has exactly one animator; death disposes it", async ({
             (v.animator == null || v.animator._disposed === true)
           );
         }),
-      { timeout: 60_000 },
+      { timeout: SWGL_POLL_MS }, // one frame suffices; the budget outlasts frame GAPS
     )
     .toBe(true);
 });

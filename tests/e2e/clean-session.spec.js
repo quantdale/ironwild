@@ -5,20 +5,23 @@
 import { expect, test } from "@playwright/test";
 import {
   startGame,
+  SWGL_POLL_MS,
+  SWGL_SPEC_MS,
   tapKey,
   waitControlSettled,
   watchConsole,
 } from "./helpers.js";
 
 test("20s mixed session stays console-clean", async ({ page }) => {
-  // Wall-clock budget: under headless SwiftShader the sim crawls near 1fps,
-  // so the same ~20 game-second session takes minutes of wall clock. The spec
-  // asserts CONSOLE cleanliness over a mixed session, not session duration.
-  // Budget math (not a guess): rawDt is clamped to 0.05s/frame, so at ~1fps
-  // G.elapsed accrues <=0.05s per wall second -> the >8s gameplay-clock
-  // invariant alone needs >=160s of unpaused wall time there, on top of
-  // action latency. 420s covers that with margin; hardware GL finishes in ~15s.
-  test.setTimeout(420_000);
+  // Wall-clock budget: under headless SwiftShader the sim crawls near 1fps
+  // (worse when an external VM loads the host - observed ~0.5fps sustained).
+  // The spec asserts CONSOLE cleanliness over a mixed session, not session
+  // duration. Budget math (not a guess): rawDt is clamped to 0.05s/frame, so
+  // the >8s gameplay-clock invariant needs >=160 SIMULATED frames; at the
+  // observed worst sustained cadence that is hundreds of wall seconds, on top
+  // of starved action latency. SWGL_SPEC_MS covers it with margin; hardware
+  // GL finishes in ~15-30s regardless (polls exit early).
+  test.setTimeout(SWGL_SPEC_MS);
   const consoleLog = watchConsole(page); // attach BEFORE navigation
   await startGame(page);
   await waitControlSettled(page);
@@ -68,29 +71,47 @@ test("20s mixed session stays console-clean", async ({ page }) => {
   await page.keyboard.up("KeyQ");
   await expect.poll(() => page.evaluate(() => window.__IW.G.timeScale)).toBe(1);
 
-  // --- panels: inventory / skills / bestiary ---
+  // --- panels: inventory / skills / bestiary (budgets: starved-host frame gaps) ---
   await tapKey(page, "KeyI");
-  await expect(page.locator("#iw-craft-arrows")).toBeVisible();
+  await expect(page.locator("#iw-craft-arrows")).toBeVisible({
+    timeout: SWGL_POLL_MS,
+  });
   await tapKey(page, "KeyI");
-  await expect(page.locator("#iw-craft-arrows")).toBeHidden();
+  await expect(page.locator("#iw-craft-arrows")).toBeHidden({
+    timeout: SWGL_POLL_MS,
+  });
 
   await tapKey(page, "Tab");
-  await expect(page.locator(".iw-skill").first()).toBeVisible();
+  await expect(page.locator(".iw-skill").first()).toBeVisible({
+    timeout: SWGL_POLL_MS,
+  });
   await tapKey(page, "Tab");
-  await expect(page.locator(".iw-skill").first()).toBeHidden();
+  await expect(page.locator(".iw-skill").first()).toBeHidden({
+    timeout: SWGL_POLL_MS,
+  });
 
   await tapKey(page, "KeyB");
-  await expect(page.locator(".iw-best").first()).toBeVisible();
+  await expect(page.locator(".iw-best").first()).toBeVisible({
+    timeout: SWGL_POLL_MS,
+  });
   await tapKey(page, "Escape"); // panels close on Esc too
-  await expect(page.locator(".iw-best").first()).toBeHidden();
+  await expect(page.locator(".iw-best").first()).toBeHidden({
+    timeout: SWGL_POLL_MS,
+  });
 
   // --- pause/resume round trip ---
   await waitControlSettled(page); // relock after panel close has settled
   await tapKey(page, "Escape");
-  await expect.poll(() => page.evaluate(() => window.__IW.G.paused)).toBe(true);
+  await expect
+    .poll(() => page.evaluate(() => window.__IW.G.paused), {
+      timeout: SWGL_POLL_MS,
+    })
+    .toBe(true);
   await page.locator("#iw-resume").click();
   await expect
-    .poll(() => page.evaluate(() => window.__IW.G.paused))
+    .poll(() => page.evaluate(() => window.__IW.G.paused), {
+      timeout: SWGL_POLL_MS,
+    })
     .toBe(false);
 
   // --- sprint, jump, backtrack ---
@@ -111,7 +132,7 @@ test("20s mixed session stays console-clean", async ({ page }) => {
   // The invariant under test is unchanged (the clock really advanced >8s).
   await expect
     .poll(() => page.evaluate(() => window.__IW.G.elapsed), {
-      timeout: 120_000,
+      timeout: 600_000, // see ceiling math above: 8 game-s = >=160 frames starved
     })
     .toBeGreaterThan(8);
   await page.mouse.move(700, 300, { steps: 4 });
