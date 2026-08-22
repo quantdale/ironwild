@@ -21,7 +21,7 @@
 // Usage: node scripts/perf-capture.mjs [--soak] [--soak-mins=N]
 import { chromium } from "@playwright/test";
 
-const BASE = "http://localhost:4173";
+const BASE = process.env.IW_PERF_BASE || "http://localhost:4173";
 const SOAK = process.argv.includes("--soak");
 // Accept both "--soak-mins 20" and "--soak-mins=20".
 const eqMins = process.argv.find((a) => a.startsWith("--soak-mins="));
