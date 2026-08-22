@@ -42,12 +42,16 @@ const QUANTUM = 0.05;           // applied-ratio rounding step (see applyRatio)
 const DT_CLAMP_S = 0.25;        // deltas above this are gaps, not rendered frames
                                 // (tab resume / debugger pause) - dropped whole
 
-// Per-quality scale bounds. Upper bounds below 1.0 keep the medium/low presets
-// from ever exceeding their own intended resolution ceilings.
+// Per-quality scale bounds. hi is 1.0 for EVERY tier: scale multiplies the
+// quality preset's own pixel ratio, so scale <= 1.0 already guarantees the
+// controller never exceeds the tier's declared resolution - the settings UI
+// promises "medium == 1.25" and boot must honor that exactly, shedding BELOW
+// it only while measured load demands, then recovering precisely back to the
+// preset ratio once the frame budget is met (see module-header philosophy).
 const BOUNDS = {
   high:   { lo: 0.65, hi: 1.0 },
-  medium: { lo: 0.55, hi: 0.9 },
-  low:    { lo: 0.5,  hi: 0.85 },
+  medium: { lo: 0.55, hi: 1.0 },
+  low:    { lo: 0.5,  hi: 1.0 },
 };
 
 // --- module state -----------------------------------------------------------

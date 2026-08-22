@@ -50,12 +50,16 @@ test('quality switch re-bounds the controller', async ({ page }) => {
     window.__IW.G.settings.quality = 'low';
     window.__IW.bus.emit('settingsChanged', { key: 'quality', value: 'low' });
   });
+  // Low bounds [0.5, 1.0]; the walked-down scale carries into the new tier
+  // unchanged, and the applied ratio must equal quantize(basePR * scale) with
+  // the low preset's basePR = 1.0 - the quantization contract itself, not an
+  // incidental ceiling.
+  const q = (v) => Math.max(0.05, Math.round(v / 0.05) * 0.05);
   const lowTier = await page.evaluate(() => ({
     scale: window.__IW.dynres.getScale(),
     ratio: window.__IW.G.renderer.getPixelRatio(),
   }));
-  // Low bounds [0.5, 0.85]; applied ratio = 1.0 * scale <= 0.85.
-  expect(lowTier.scale).toBeLessThanOrEqual(0.85);
+  expect(lowTier.scale).toBeLessThanOrEqual(1);
   expect(lowTier.scale).toBeGreaterThanOrEqual(0.5);
-  expect(lowTier.ratio).toBeLessThanOrEqual(0.86);
+  expect(lowTier.ratio).toBeCloseTo(q(1.0 * lowTier.scale), 5);
 });

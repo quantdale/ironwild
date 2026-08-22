@@ -388,18 +388,21 @@ describe('dynres: sustained-load control law', () => {
     expect(applied).toHaveLength(len);
   });
 
-  it('medium tier stops at its own tighter bounds (never exceeds preset ceiling)', async () => {
+  it('medium tier sheds to its own floor; boot applies exactly the preset ratio', async () => {
     const { G, dynres } = await loadFresh();
     G.paused = false;
     G.settings.quality = 'medium';
     const { renderer, composer, applied } = makeGfx(1.0);
     dynres.createDynRes();
     dynres.setContext({ renderer, composer });
+    // Boot honors the user's tier selection EXACTLY (scale 1.0 == preset).
+    expect(applied[0]).toBeCloseTo(1.0 * 1.0, 5);
     feed(dynres.updateDynRes, 0.02, 1100);
     expect(dynres.getScale()).toBe(0.55); // medium lo
     for (const v of applied) {
       expect(v).toBeGreaterThanOrEqual(1.0 * 0.55 - 0.05 + 1e-9);
-      expect(v).toBeLessThanOrEqual(1.0 * 0.9 + 1e-9);
+      // scale <= 1.0 in every tier: never above the preset's own resolution.
+      expect(v).toBeLessThanOrEqual(1.0 * 1.0 + 1e-9);
     }
   });
 
@@ -567,15 +570,16 @@ describe('dynres: quality recalibration', () => {
     feed(dynres.updateDynRes, 0.01, 1400);  // ...then climb back toward 1.0
     expect(dynres.getScale()).toBeGreaterThanOrEqual(1.0 - 1e-3);
 
-    // Downgrade to medium while scale sits at the high ceiling: scale must be
-    // clamped to 0.9 immediately, applied ratio recomputed from the new tier.
+    // Downgrade to medium while scale sits at the high ceiling: hi is 1.0 in
+    // every tier, so scale 1.0 stays legal and the new preset's OWN ratio
+    // applies immediately - the settings UI's promised resolution.
     G.settings.quality = 'medium';
     gfx.pr = 0.9;
     dynres.onQualityChanged();
-    expect(dynres.getScale()).toBe(0.9);
-    // quantize(0.9 * 0.9 = 0.81) = round(16.2) * 0.05 = 0.80
-    expect(applied[applied.length - 1]).toBeCloseTo(0.8, 5);
-    expect(globalThis.window.__IW_DYNRES_SCALE).toBe(0.9);
+    expect(dynres.getScale()).toBe(1.0);
+    // quantize(0.9 * 1.0 = 0.9) = round(18) * 0.05 = 0.90
+    expect(applied[applied.length - 1]).toBeCloseTo(0.9, 5);
+    expect(globalThis.window.__IW_DYNRES_SCALE).toBe(1.0);
   });
 });
 
