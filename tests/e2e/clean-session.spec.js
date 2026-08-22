@@ -11,6 +11,10 @@ import {
 } from './helpers.js';
 
 test('20s mixed session stays console-clean', async ({ page }) => {
+  // Wall-clock budget: under headless SwiftShader the sim crawls near 1fps,
+  // so the same ~20 game-second session takes minutes of wall clock. The spec
+  // asserts CONSOLE cleanliness over a mixed session, not session duration.
+  test.setTimeout(300_000);
   const consoleLog = watchConsole(page); // attach BEFORE navigation
   await startGame(page);
   await waitControlSettled(page);
