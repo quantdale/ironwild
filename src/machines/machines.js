@@ -1031,6 +1031,7 @@ function updateMachine(m, dt) {
     updateDeath(m, dt);
     return;
   }
+  if (m._detailTick && G.player) m._detailTick(G.player.pos);
 
   if (m.staggerTimer > 0) m.staggerTimer = Math.max(0, m.staggerTimer - dt);
   if (a.flinch > 0) a.flinch = Math.max(0, a.flinch - dt);
@@ -1124,12 +1125,51 @@ function disposeMachine(m) {
   if (i >= 0) G.machines.splice(i, 1);
 }
 
+// Shadow/detail budget: procedural machines are built from dozens of small
+// primitives. Tiny parts (claws, eyes, cords, bolts) contribute nothing
+// perceptible to the shadow map and disappear entirely at mid range, so:
+//   - volume < SHADOW_MIN_VOL -> never casts (shadow pass was 66% of frames)
+//   - volume < DETAIL_VOL     -> tracked as a detail part; hidden past
+//     DETAIL_DIST by updateMachine (never weak-point nodes - those are
+//     gameplay targets).
+const SHADOW_MIN_VOL = 8e-4;
+const DETAIL_VOL = 5e-4;
+const DETAIL_DIST = 45;
+const DETAIL_DIST_SQ = DETAIL_DIST * DETAIL_DIST;
+// Beyond this range a machine stops rendering into the shadow map entirely:
+// at that screen size its cast shadow is a few pixels of noise, but its
+// ~20-40 body parts were among the heaviest shadow-pass contributors.
+const SHADOW_CAST_DIST = 65;
+const SHADOW_CAST_DIST_SQ = SHADOW_CAST_DIST * SHADOW_CAST_DIST;
+
+function partVolume(mesh) {
+  const s = mesh.scale;
+  return Math.abs(s.x * s.y * s.z);
+}
+
+/**
+ * Shadow/detail budget pass. Returns { casters, details }: casters are the
+ * meaningful-volume non-emissive meshes (start casting); details are sub-
+ * DETAIL_VOL meshes hidden past DETAIL_DIST by the per-frame LOD tick.
+ */
 function enableShadows(root) {
+  const casters = [];
+  const details = [];
   root.traverse((o) => {
-    if (o.isMesh && o.material && o.material.emissive && o.material.emissive.getHex() === 0) {
-      o.castShadow = true;
+    if (!o.isMesh || !o.material) return;
+    if (o.material.emissive && o.material.emissive.getHex() !== 0) return;
+    const vol = partVolume(o);
+    // Order matters: DETAIL_VOL < SHADOW_MIN_VOL, so sub-detail parts are
+    // collected here instead of falling through both gates.
+    if (vol < DETAIL_VOL) {
+      details.push(o);
+      return;
     }
+    if (vol < SHADOW_MIN_VOL) return;
+    o.castShadow = true;
+    casters.push(o);
   });
+  return { casters, details };
 }
 
 // ------------------------------------------------------------------ export --
@@ -1178,7 +1218,17 @@ export function createMachine(type, x, z) {
     },
   };
   def.build(m, mats);
-  enableShadows(m.group);
+  const { casters, details } = enableShadows(m.group);
+  // Weak-point nodes (and anything under them) are gameplay targets - they
+  // never join the distance-hidden detail set.
+  const wpNodes = new Set();
+  for (const wp of m.weakPoints) {
+    if (wp.mesh) wp.mesh.traverse((o) => wpNodes.add(o));
+  }
+  m._anim.detailParts = details.filter((mesh) => !wpNodes.has(mesh));
+  m._anim.detailsHidden = false;
+  m._anim.shadowCasters = casters.filter((mesh) => !wpNodes.has(mesh));
+  m._anim.castNear = true;
   // collect every material once for fading on death
   const seen = new Set();
   m.group.traverse((o) => {
@@ -1192,5 +1242,28 @@ export function createMachine(type, x, z) {
   m.hit = (damage, point, weakPoint) => applyHit(m, damage, point, weakPoint);
   m.update = (dt) => updateMachine(m, dt);
   m.dispose = () => disposeMachine(m);
+  // Distance LOD tick: (1) micro-parts vanish past DETAIL_DIST, (2) shadow
+  // casting gates off past SHADOW_CAST_DIST. Both are state toggles - work
+  // happens only on threshold crossings, never per frame.
+  m._detailTick = (playerPos) => {
+    const a = m._anim;
+    const dxp = m.group.position.x - playerPos.x;
+    const dzp = m.group.position.z - playerPos.z;
+    const d2 = dxp * dxp + dzp * dzp;
+    if (a.detailParts && a.detailParts.length) {
+      const far = d2 > DETAIL_DIST_SQ;
+      if (far !== a.detailsHidden) {
+        a.detailsHidden = far;
+        for (const mesh of a.detailParts) mesh.visible = !far;
+      }
+    }
+    if (a.shadowCasters && a.shadowCasters.length) {
+      const near = d2 <= SHADOW_CAST_DIST_SQ;
+      if (near !== a.castNear) {
+        a.castNear = near;
+        for (const mesh of a.shadowCasters) mesh.castShadow = near;
+      }
+    }
+  };
   return m;
 }

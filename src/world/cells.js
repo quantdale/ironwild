@@ -137,6 +137,11 @@ export function register(cellKey, record) {
     onActivate: record && record.onActivate,
     onDeactivate: record && record.onDeactivate,
     onRetire: record && record.onRetire,
+    // Optional shadow budget: when set (units), updateCells toggles
+    // group.castShadow inside this radius of the anchor so distant batches
+    // stop rendering into the shadow map (the dominant draw-call sink).
+    shadowRadius: record && typeof record.shadowRadius === 'number' ? record.shadowRadius : null,
+    shadowing: null, // last castShadow state written (hysteresis bookkeeping)
     retired: false,
     shown: false,
   };
@@ -194,6 +199,19 @@ export function updateCells(pos, _dt) {
     } else if (d2 <= active2) {
       cell.active = true;
       for (const r of cell.records) if (!r.retired) setRecordShown(r, true);
+    }
+
+    // Shadow-caster budget: batches registered with a shadowRadius cast only
+    // inside that ring (exit hysteresis 1.18x). Hidden cells keep whatever
+    // state they had - an invisible group renders in neither pass.
+    for (const r of cell.records) {
+      if (r.retired || r.shadowRadius == null || !r.group) continue;
+      const sr = r.shadowRadius;
+      const want = d2 <= sr * sr ? true : d2 <= sr * sr * 1.39 ? r.shadowing : false;
+      if (r.shadowing !== want) {
+        r.shadowing = want;
+        r.group.castShadow = want;
+      }
     }
   }
 }

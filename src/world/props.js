@@ -24,6 +24,10 @@ import { groupInstancesByCell } from './lod.js';
 
 // ---- tuning ---------------------------------------------------------------
 const TREE_COUNT = 230;  // v2: bigger pool so the NE forest reaches ~1.6x meadow density
+// Trees cast into the shadow map only inside this ring around the player
+// (hysteresis handled by cells.js). 85u sits inside the high-tier shadow
+// camera extent (120u), so ring-excluded batches were pure wasted shadow draws.
+const TREE_SHADOW_RADIUS = 85;
 const ROCK_COUNT = 150;  // v2: bigger pool so the S highlands get extra rocks/boulders
 const GRASS_PATCHES = 46;
 const BLADES_PER_PATCH = 60;
@@ -176,7 +180,7 @@ function flushInstances(...meshes) {
 // is valid for culling (that was false for global batches on purpose).
 // pad grows the culling sphere slightly for batches whose matrices mutate
 // after build (tree canopy sway drifts tips a fraction of a unit).
-function installCellBatches(kind, geo, mat, items, castShadow, pad = 0) {
+function installCellBatches(kind, geo, mat, items, castShadow, pad = 0, shadowRadius = 0) {
   const colorByMatrix = new Map();
   const indexByMatrix = new Map(); // staged order -> item index (route alignment)
   for (let i = 0; i < items.length; i++) {
@@ -203,7 +207,7 @@ function installCellBatches(kind, geo, mat, items, castShadow, pad = 0) {
       mesh.boundingSphere.radius += pad;
     }
     G.scene.add(mesh);
-    registerCell(key, { group: mesh, kind });
+    registerCell(key, { group: mesh, kind, shadowRadius: shadowRadius > 0 ? shadowRadius : undefined });
     meshes.push(mesh);
   }
   return { meshes, route };
@@ -550,13 +554,15 @@ function buildTrees(rng) {
 
   // Wave D: regroup staged placements into per-cell batches registered with
   // cells.js, and keep the per-tree routing tables the sway recompositor uses
-  // to address instances inside cell-local buffers.
-  installCellBatches('treeTrunk', trunkGeo, barkMat, trunkItems, true);
+  // to address instances inside cell-local buffers. TREE_SHADOW_RADIUS keeps
+  // canopies out of the shadow map beyond the near ring - shadow-pass draws
+  // dominated the frame budget, and distant tree shadows are invisible noise.
+  installCellBatches('treeTrunk', trunkGeo, barkMat, trunkItems, true, 0, TREE_SHADOW_RADIUS);
   const routes = [];
   for (let k = 0; k < 3; k++) {
     // pad: sway lean shifts canopy tips a fraction of a unit after the culling
     // sphere is computed - grow it so frustum tests stay conservative.
-    const inst = installCellBatches(`treeCone${k}`, coneGeo, leafMat, coneItems[k], true, 0.5);
+    const inst = installCellBatches(`treeCone${k}`, coneGeo, leafMat, coneItems[k], true, 0.5, TREE_SHADOW_RADIUS);
     // Re-index batch routing by TREE slot (staged items skip absent layers).
     const byTree = new Array(treePlaced).fill(null);
     for (let n = 0; n < coneItems[k].length; n++) {
