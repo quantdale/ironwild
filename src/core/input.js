@@ -497,8 +497,7 @@ class InputManager {
       !this._lockEverSustained &&
       this.locked &&
       this._lockEngagedAt != null &&
-      performance.now() - this._lockEngagedAt >=
-        InputManager.LOCK_SUSTAINED_MS
+      performance.now() - this._lockEngagedAt >= InputManager.LOCK_SUSTAINED_MS
     ) {
       this._lockEverSustained = true;
     }
