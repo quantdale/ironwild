@@ -3,18 +3,21 @@
 // unit-covered; here we verify the INTEGRATION deterministically via the
 // debugFeed seam (same average+decision path as real frames, bypassing the
 // hidden/paused gates that exist to protect real-frame statistics).
-import { expect, test } from '@playwright/test';
-import { gotoGame } from './helpers.js';
+import { expect, test } from "@playwright/test";
+import { gotoGame } from "./helpers.js";
 
-test('dynres stays within tier bounds and publishes its scale', async ({ page }) => {
+test("dynres stays within tier bounds and publishes its scale", async ({
+  page,
+}) => {
   await gotoGame(page);
 
-  const state = () => page.evaluate(() => ({
-    scale: window.__IW.dynres.getScale(),
-    published: window.__IW_DYNRES_SCALE,
-    ratio: window.__IW.G.renderer.getPixelRatio(),
-    cssW: window.__IW.G.canvas.clientWidth,
-  }));
+  const state = () =>
+    page.evaluate(() => ({
+      scale: window.__IW.dynres.getScale(),
+      published: window.__IW_DYNRES_SCALE,
+      ratio: window.__IW.G.renderer.getPixelRatio(),
+      cssW: window.__IW.G.canvas.clientWidth,
+    }));
 
   // Sustained overloaded frames (33ms avg >> 18.5ms band) must walk the scale
   // DOWN toward the high-tier floor (0.65) and stop there - never below.
@@ -40,26 +43,27 @@ test('dynres stays within tier bounds and publishes its scale', async ({ page })
   expect(recovered.cssW).toBe(1280);
 });
 
-test('quality switch re-bounds the controller', async ({ page }) => {
+test("quality switch re-bases the controller", async ({ page }) => {
   await gotoGame(page);
 
   // Walk deep into a downscale at high, then switch tiers via the same bus
-  // path the settings modal uses.
-  await page.evaluate(() => {
+  // path the settings modal uses. A tier switch is a deliberate re-baseline:
+  // the new tier's OWN resolution must apply immediately at full scale -
+  // no adaptive deficit carried over from the old tier.
+  const walkedDown = await page.evaluate(() => {
     for (let i = 0; i < 120; i++) window.__IW.dynres.debugFeed(33);
-    window.__IW.G.settings.quality = 'low';
-    window.__IW.bus.emit('settingsChanged', { key: 'quality', value: 'low' });
+    return window.__IW.dynres.getScale();
   });
-  // Low bounds [0.5, 1.0]; the walked-down scale carries into the new tier
-  // unchanged, and the applied ratio must equal quantize(basePR * scale) with
-  // the low preset's basePR = 1.0 - the quantization contract itself, not an
-  // incidental ceiling.
-  const q = (v) => Math.max(0.05, Math.round(v / 0.05) * 0.05);
+  expect(walkedDown).toBeLessThan(1); // precondition: genuinely downscaled
+  await page.evaluate(() => {
+    window.__IW.G.settings.quality = "low";
+    window.__IW.bus.emit("settingsChanged", { key: "quality", value: "low" });
+  });
   const lowTier = await page.evaluate(() => ({
     scale: window.__IW.dynres.getScale(),
     ratio: window.__IW.G.renderer.getPixelRatio(),
   }));
-  expect(lowTier.scale).toBeLessThanOrEqual(1);
-  expect(lowTier.scale).toBeGreaterThanOrEqual(0.5);
-  expect(lowTier.ratio).toBeCloseTo(q(1.0 * lowTier.scale), 5);
+  // Low preset basePR is 1.0; reset scale 1.0 quantizes to exactly that.
+  expect(lowTier.scale).toBe(1);
+  expect(lowTier.ratio).toBeCloseTo(1.0, 5);
 });
