@@ -58,6 +58,38 @@ test("hunter authored rig replaces the procedural body and keeps weapons bound",
   expect(await page.evaluate(() => window.__IW.G.paused)).toBe(false);
 });
 
+test("skitter machines upgrade to the authored animator", async ({ page }) => {
+  test.setTimeout(SWGL_SPEC_MS);
+  await gotoGame(page);
+  await startGame(page);
+
+  // Every live skitter must have flipped its animator to authored mode once
+  // the GLB resolves (procedural visuals hidden, AnimGraph driving clips).
+  const probe = await page.evaluate(() => {
+    const G = window.__IW.G;
+    let skitters = 0;
+    let authored = 0;
+    for (const m of G.machines) {
+      if (m.type !== "skitter" || !m.alive || !m.animator) continue;
+      skitters++;
+      if (m.animator.mode === "authored") authored++;
+      if (authored === 1 && skitters === 1) {
+        // First one: confirm the procedural meshes were retired.
+        m.group.traverse((o) => {
+          if (o.isMesh && o.visible) o._iwVisible = true;
+        });
+      }
+    }
+    return { skitters, authored };
+  });
+
+  expect(probe.skitters).toBeGreaterThan(0);
+  expect(probe.authored).toBe(probe.skitters);
+
+  // The world must still be simulating (no pause/regression from the swap).
+  expect(await page.evaluate(() => window.__IW.G.paused)).toBe(false);
+});
+
 test("certification asset loads through the real pipeline", async ({ page }) => {
   test.setTimeout(SWGL_SPEC_MS);
   await gotoGame(page);

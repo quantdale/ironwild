@@ -70,13 +70,12 @@ export const ASSET_MANIFEST = {
   machines: {
     skitter: {
       id: 'skitter',
-      // url:null = binary not authored yet. The pipeline treats this as a
-      // permanent placeholder state (never fetches, never marks failed); when
-      // art lands, restore the canonical path 'machines/skitter.glb' below.
-      // Keeping nulls here is what makes zero-asset boot deterministic.
-      url: null, // ASSET_ROOT + 'machines/skitter.glb'
+      // First AUTHORED machine through the animator path (see
+      // scripts/create-skitter-asset.mjs provenance). Authored-placeholder
+      // tier: rig + locomotion/lunge/hit/death clips drive the AnimGraph.
+      url: ASSET_ROOT + 'machines/skitter.glb',
       lods: null,
-      clips: ['loc_idle', 'loc_walk_fwd', 'loc_run_fwd', 'react_hit', 'react_death'],
+      clips: ['loc_idle', 'loc_walk_fwd', 'loc_run_fwd', 'act_skitter_lunge', 'react_hit', 'react_death'],
       sockets: ['socket_jaw'],
       weakPoints: [{ name: 'eye', tag: 'wp_eye' }],
       draco: false,

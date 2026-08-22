@@ -9,6 +9,7 @@ import { clamp, damp, smoothstep, randRange } from '../core/utils.js';
 import { heightAt } from '../world/terrain.js';
 import { spawnPickup } from '../world/props.js';
 import { sfx } from '../audio/audio.js';
+import { getEntry } from '../systems/assets.js';
 
 // Shared unit geometries, scaled per part. Cached at module scope and never
 // disposed, so machine dispose() only releases materials.
@@ -1193,6 +1194,9 @@ export function createMachine(type, x, z) {
     aggro: false,
     weakPoints: [],
     bodySpheres: [],
+    // Authored-animator opt-in: when the manifest entry carries a real GLB,
+    // the machine animator upgrades itself to the authored rig (machineAnim).
+    assetId: getEntry(type)?.url ? type : null,
     radius: def.radius,
     maxSpeed: def.maxSpeed,
     moveSpeed: 0,      // planar speed set by the AI each frame; drives the gait

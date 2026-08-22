@@ -1,0 +1,9 @@
+{
+  "id": "skitter",
+  "generatedBy": "scripts/create-skitter-asset.mjs",
+  "authoredBy": "IRONWILD project (procedural, in-repo)",
+  "license": "MIT",
+  "modified": false,
+  "purpose": "authored placeholder - first machine through the authored animator path",
+  "created": "2026-08-22T20:55:21.686Z"
+}

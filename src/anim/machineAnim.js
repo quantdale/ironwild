@@ -74,6 +74,19 @@ function installAuthored(machine, animator, inst) {
   if (!root || !Array.isArray(clips) || !clips.length) return false;
   const graph = createAnimGraph(root, clips);
   if (!graph.mixer) return false; // no loc_*/act_*/react_* clips -> nothing to drive
+  // Retire the procedural visuals: stash-and-hide BEFORE grafting the rig.
+  // They stay referenced (hit spheres / weak-point transforms keep working)
+  // but stop drawing. The authored root carries its own sockets/wp nodes.
+  const procMeshes = [];
+  machine.group.traverse((o) => {
+    if (o.isMesh || o.isInstancedMesh) procMeshes.push(o);
+  });
+  for (const mesh of procMeshes) mesh.visible = false;
+  machine._procVisualsHidden = procMeshes;
+  // Authored rig casts shadows like the procedural build did.
+  root.traverse((o) => {
+    if (o.isMesh) o.castShadow = true;
+  });
   machine.group.add(root);
   animator.graph = graph;
   animator.root = root;
