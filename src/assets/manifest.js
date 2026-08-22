@@ -113,14 +113,15 @@ export const ASSET_MANIFEST = {
   player: {
     hunter: {
       id: 'hunter',
-      // Unauthored placeholder - see skitter note above.
-      url: null, // ASSET_ROOT + 'player/hunter.glb'
+      // Authored placeholder tier: repository-generated rig that mirrors the
+      // procedural body's node names/pivots (see scripts/create-hunter-asset.mjs
+      // provenance). The pose system drives it through player.rebindPoseRefs.
+      // Skinned production art + clip library replace this file in place.
+      url: ASSET_ROOT + 'player/hunter.glb',
       lods: null,
-      clips: [
-        'loc_idle', 'loc_walk_fwd', 'loc_run_fwd', 'loc_crouch_fwd', 'loc_swim_fwd',
-        'act_bow_draw', 'act_bow_release', 'act_spear_thrust', 'act_dodge',
-        'react_hit', 'react_death',
-      ],
+      // Clip vocabulary still pending authored animation - the procedural
+      // pose system drives this asset; do not list clips that don't ship.
+      clips: [],
       sockets: ['socket_hand_r', 'socket_hand_l', 'socket_back', 'socket_hips'],
       weakPoints: [], // player is not a shootable machine
       draco: false,

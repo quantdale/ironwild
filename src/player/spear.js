@@ -119,11 +119,20 @@ function tryAttach() {
   const hand = group.getObjectByName('handR');
   if (hand) {
     hand.add(_spearRoot); // bone already carries the placement
+    _attached = true;
   } else {
     _spearRoot.position.set(0.25, 1.3, 0.35); // fallback: right-side hip carry
     group.add(_spearRoot);
+    _attached = true;
   }
-  _attached = true;
+}
+
+/**
+ * Authored-body seam: clear the attach latch so the next updateSpear()
+ * re-resolves handR on the swapped rig (see bow.requestReattach).
+ */
+export function requestReattach() {
+  _attached = false;
 }
 
 /** Build the spear and install it on the player's right hand. Call once at boot. */

@@ -14,8 +14,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 
-// Manifest census: 3 machines + 1 player + 2 env (wayshrine authored,
-// ruin_kit placeholder). Update when entries are added/removed.
+// Manifest census: 3 machines + 1 player + 2 env (wayshrine + hunter
+// authored, ruin_kit placeholder). Update when entries are added/removed.
 const ENTRY_COUNT = 6;
 const GRACE_MS = 30000; // mirrors GRACE_MS in systems/assets.js
 
@@ -157,7 +157,7 @@ describe('boot safety with zero authored assets (gap 3E)', () => {
   it('preload() silently skips unauthored ids and still warns once on unknown ids', async () => {
     const { assets } = await loadFresh();
     const calls = installFakeLoader(assets, { gltf: makeGltf() });
-    assets.preload(['skitter', 'hunter', 'ruin_kit', 'duskwing', 'ironmaw', 'ghost']);
+    assets.preload(['skitter', 'ruin_kit', 'duskwing', 'ironmaw', 'ghost']);
     await Promise.resolve(); // drain microtasks: any swallowed rejection lands here
     expect(calls).toHaveLength(0);
     expect(warnSpy).toHaveBeenCalledTimes(1); // only the unknown-id warning
@@ -485,3 +485,4 @@ describe('exported pure convention helpers (collectMetadata / resolveLod)', () =
     expect(assets.resolveLod(new THREE.Object3D(), 1)).toBeNull(); // no suffixed children
   });
 });
+

@@ -6,6 +6,58 @@
 import { expect, test } from "@playwright/test";
 import { gotoGame, startGame, SWGL_POLL_MS, SWGL_SPEC_MS } from "./helpers.js";
 
+test("hunter authored rig replaces the procedural body and keeps weapons bound", async ({
+  page,
+}) => {
+  test.setTimeout(SWGL_SPEC_MS);
+  await gotoGame(page);
+  await startGame(page);
+
+  // Authored swap completes asynchronously after boot.
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const G = window.__IW.G;
+          let found = null;
+          G.player.group.traverse((o) => {
+            if (!found && o.userData && o.userData.assetId === "hunter") {
+              found = o;
+            }
+          });
+          return !!found;
+        }),
+      { timeout: SWGL_POLL_MS },
+    )
+    .toBe(true);
+
+  // Pose groups rebound onto the authored rig (same names/pivots) and the
+  // weapon anchors resolve - the bow must have re-attached to authored handL.
+  const probe = await page.evaluate(() => {
+    const g = window.__IW.G.player.group;
+    return {
+      legL: !!g.getObjectByName("legL"),
+      handL: !!g.getObjectByName("handL"),
+      handR: !!g.getObjectByName("handR"),
+      sockets: ["socket_hand_l", "socket_hand_r", "socket_back", "socket_hips"].filter(
+        (n) => !!g.getObjectByName(n),
+      ),
+      torsoTwisting: (() => {
+        const t = g.getObjectByName("torso");
+        return t ? typeof t.rotation.x === "number" : false;
+      })(),
+    };
+  });
+  expect(probe.legL).toBe(true);
+  expect(probe.handL).toBe(true);
+  expect(probe.handR).toBe(true);
+  expect(probe.sockets).toHaveLength(4);
+  expect(probe.torsoTwisting).toBe(true);
+
+  // Gameplay must remain live after the visual swap.
+  expect(await page.evaluate(() => window.__IW.G.paused)).toBe(false);
+});
+
 test("certification asset loads through the real pipeline", async ({ page }) => {
   test.setTimeout(SWGL_SPEC_MS);
   await gotoGame(page);

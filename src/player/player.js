@@ -179,6 +179,12 @@ export function createPlayer() {
   const armL = makeArm(-1, 'handL');
   const armR = makeArm(1, 'handR');
 
+  // Pose indirection: the per-frame pose code drives whatever groups these
+  // names currently resolve to inside `body`. hunterView swaps in the
+  // authored rig (same node names, same pivot transforms) and then calls
+  // rebindPoseRefs() - the animation code below never changes.
+  const pose = { torso, head, armL, armR, legL, legR };
+
   // Back quiver with a few arrow sticks
   const quiver = new THREE.Group();
   quiver.position.set(0.07, 1.30, -0.20);
@@ -613,17 +619,17 @@ export function createPlayer() {
     // Idle breathing bob; head tracks camera pitch a little while aiming.
     const breath = Math.sin(breatheT * 2.1);
     if (!player.dead && !player.dodging) bodyY += breath * 0.012;
-    torso.rotation.x = player.dead ? 0 : breath * 0.02 + lean * 0.4 + crouchAmt * 0.28;
-    torso.rotation.y = damp(torso.rotation.y, torsoTwist, 20, dt); // v3 swing twist
-    head.rotation.x = player.dead
+    pose.torso.rotation.x = player.dead ? 0 : breath * 0.02 + lean * 0.4 + crouchAmt * 0.28;
+    pose.torso.rotation.y = damp(pose.torso.rotation.y, torsoTwist, 20, dt); // v3 swing twist
+    pose.head.rotation.x = player.dead
       ? 0
       : breath * 0.015 - 0.03 + (G.cam.aiming ? clamp(G.cam.pitch, -0.6, 0.6) * 0.55 : 0);
 
     const jl = 14; // joint damp lambda
-    legL.rotation.x = damp(legL.rotation.x, lLeg, jl, dt);
-    legR.rotation.x = damp(legR.rotation.x, rLeg, jl, dt);
-    armL.rotation.x = damp(armL.rotation.x, lArm, jl, dt);
-    armR.rotation.x = damp(armR.rotation.x, rArm, jl, dt);
+    pose.legL.rotation.x = damp(pose.legL.rotation.x, lLeg, jl, dt);
+    pose.legR.rotation.x = damp(pose.legR.rotation.x, rLeg, jl, dt);
+    pose.armL.rotation.x = damp(pose.armL.rotation.x, lArm, jl, dt);
+    pose.armR.rotation.x = damp(pose.armR.rotation.x, rArm, jl, dt);
     body.rotation.x = bodyRotX;
     body.rotation.z = strafeLean;
     body.position.y = bodyY;
@@ -631,5 +637,40 @@ export function createPlayer() {
 
   G.player = player;
   G.scene.add(group);
+
+  // --- authored-body seam (hunterView) ------------------------------------
+  // Swaps the procedural body visuals for the manifest-authored rig (same
+  // node names + pivots). Procedural children are kept for restore; pose
+  // groups re-resolve by name so the animation code above keeps working.
+  let proceduralChildren = null;
+  player.rebindPoseRefs = () => {
+    const find = (n) => group.getObjectByName(n);
+    for (const key of ["torso", "head", "armL", "armR", "legL", "legR"]) {
+      const found = find(key);
+      if (found) pose[key] = found;
+    }
+  };
+  player.useAuthoredBody = (authoredRoot) => {
+    if (!authoredRoot || !authoredRoot.isObject3D) return false;
+    if (!proceduralChildren) {
+      proceduralChildren = body.children.slice();
+      for (const c of proceduralChildren) body.remove(c);
+    } else {
+      for (const c of body.children.slice()) body.remove(c);
+    }
+    body.add(authoredRoot);
+    // Re-attach any gameplay anchors that lived on the old hierarchy
+    // (handL/handR exist in both rigs under identical names).
+    player.rebindPoseRefs();
+    return true;
+  };
+  player.restoreProceduralBody = () => {
+    if (!proceduralChildren) return false;
+    for (const c of body.children.slice()) body.remove(c);
+    for (const c of proceduralChildren) body.add(c);
+    player.rebindPoseRefs();
+    return true;
+  };
+
   return player;
 }

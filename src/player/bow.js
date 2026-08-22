@@ -383,11 +383,21 @@ function tryAttach() {
   const hand = group.getObjectByName('handL');
   if (hand) {
     hand.add(_bowRoot); // bone already carries the placement
+    _attached = true;
   } else {
     _bowRoot.position.set(0.25, 1.3, 0.35);
     group.add(_bowRoot);
+    _attached = true;
   }
-  _attached = true;
+}
+
+/**
+ * Authored-body seam: when the hunter rig is swapped, the hand this bow is
+ * parented to leaves the graph. Clearing the flag makes the next updateBow()
+ * re-run tryAttach(), which resolves the (identically named) authored handL.
+ */
+export function requestReattach() {
+  _attached = false;
 }
 
 /**

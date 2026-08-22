@@ -141,11 +141,13 @@ async function main() {
             { uri: rel, format: "glb", writeTimestamp: false },
           );
           const issues = report.issues || {};
+          const fmt = (m) =>
+            m.pointer ? `${m.message} [${m.pointer}]` : m.message;
           for (const m of issues.messages || []) {
             // Khronos severities: 0=error, 1=warning, 2=information, 3=hint.
-            if (m.severity === 0) errs.push(`khronos error: ${m.message}`);
-            else if (m.severity === 1) warns.push(`khronos warn: ${m.message}`);
-            else warns.push(`khronos note: ${m.message}`);
+            if (m.severity === 0) errs.push(`khronos error: ${fmt(m)}`);
+            else if (m.severity === 1) warns.push(`khronos warn: ${fmt(m)}`);
+            else warns.push(`khronos note: ${fmt(m)}`);
           }
           const info = report.info || {};
           if ((info.animationCount ?? 0) !== (doc.json.animations?.length ?? 0)) {

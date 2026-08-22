@@ -30,6 +30,7 @@ import * as playerMod from "./player/player.js";
 import * as cameraMod from "./player/camera.js";
 import * as bowMod from "./player/bow.js";
 import * as spearMod from "./player/spear.js";
+import * as hunterViewMod from "./player/hunterView.js";
 import * as projectilesMod from "./combat/projectiles.js";
 import * as damageMod from "./combat/damage.js";
 import * as statusMod from "./combat/status.js";
@@ -617,6 +618,16 @@ function boot() {
   const bowApi = requireFn(bowMod, "createBow", "player/bow.js")();
   requireFn(spearMod, "createSpear", "player/spear.js")();
 
+  // Authored hunter rig: async swap once the GLB decodes (procedural body
+  // stays live until - and in case of any failure after - the swap).
+  try {
+    if (typeof hunterViewMod.createHunterView === "function") {
+      hunterViewMod.createHunterView();
+    }
+  } catch (err) {
+    console.error("[main] createHunterView failed:", err);
+  }
+
   requireFn(damageMod, "createDamageFX", "combat/damage.js")();
 
   // Burn tick numbers (combat/status.js); projectiles call applyBurn on fire hits.
@@ -858,6 +869,7 @@ function boot() {
   window.addEventListener("pagehide", () => {
     if (weatherMod.disposeWeather) weatherMod.disposeWeather();
     if (landmarkMod.disposeLandmarks) landmarkMod.disposeLandmarks();
+    if (hunterViewMod.disposeHunterView) hunterViewMod.disposeHunterView();
   });
 
   // Tab hidden -> force pause; menus own the resume flow.
