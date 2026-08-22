@@ -9,60 +9,60 @@
 // minimap slot into the contract positions; G.settings.quality drives pixel ratio +
 // sun shadow map size here (the only place allowed to touch renderer/shadow state).
 
-import * as THREE from 'three';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
-import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import * as THREE from "three";
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { GTAOPass } from "three/addons/postprocessing/GTAOPass.js";
+import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+import { SMAAPass } from "three/addons/postprocessing/SMAAPass.js";
+import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
+import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 
-import { G } from './core/state.js';
-import { bus } from './core/events.js';
-import { Input } from './core/input.js';
-import { clamp } from './core/utils.js';
+import { G } from "./core/state.js";
+import { bus } from "./core/events.js";
+import { Input } from "./core/input.js";
+import { clamp } from "./core/utils.js";
 
-import * as terrainMod from './world/terrain.js';
-import * as environmentMod from './world/environment.js';
-import * as weatherMod from './world/weather.js';
-import * as propsMod from './world/props.js';
-import * as playerMod from './player/player.js';
-import * as cameraMod from './player/camera.js';
-import * as bowMod from './player/bow.js';
-import * as spearMod from './player/spear.js';
-import * as projectilesMod from './combat/projectiles.js';
-import * as damageMod from './combat/damage.js';
-import * as statusMod from './combat/status.js';
-import * as aiMod from './machines/ai.js';
-import * as saveMod from './systems/save.js';
-import * as questsMod from './systems/quests.js';
-import * as xpMod from './systems/xp.js';
-import * as bestiaryMod from './systems/bestiary.js';
-import * as hudMod from './ui/hud.js';
-import * as menusMod from './ui/menus.js';
-import * as settingsMod from './ui/settings.js';
-import * as minimapMod from './ui/minimap.js';
-import * as focusMod from './ui/focus.js';
-import * as tipsMod from './ui/tips.js';
-import * as weakCueMod from './ui/weakcue.js';
-import * as audioMod from './audio/audio.js';
+import * as terrainMod from "./world/terrain.js";
+import * as environmentMod from "./world/environment.js";
+import * as weatherMod from "./world/weather.js";
+import * as propsMod from "./world/props.js";
+import * as playerMod from "./player/player.js";
+import * as cameraMod from "./player/camera.js";
+import * as bowMod from "./player/bow.js";
+import * as spearMod from "./player/spear.js";
+import * as projectilesMod from "./combat/projectiles.js";
+import * as damageMod from "./combat/damage.js";
+import * as statusMod from "./combat/status.js";
+import * as aiMod from "./machines/ai.js";
+import * as saveMod from "./systems/save.js";
+import * as questsMod from "./systems/quests.js";
+import * as xpMod from "./systems/xp.js";
+import * as bestiaryMod from "./systems/bestiary.js";
+import * as hudMod from "./ui/hud.js";
+import * as menusMod from "./ui/menus.js";
+import * as settingsMod from "./ui/settings.js";
+import * as minimapMod from "./ui/minimap.js";
+import * as focusMod from "./ui/focus.js";
+import * as tipsMod from "./ui/tips.js";
+import * as weakCueMod from "./ui/weakcue.js";
+import * as audioMod from "./audio/audio.js";
 // v5 upgrade-campaign systems (waves A-H,J): telemetry, dynamic resolution,
 // asset pipeline, environment lighting, VFX, machine animators, accessibility.
-import * as perfMod from './systems/perf.js';
-import * as dynresMod from './systems/dynres.js';
-import * as assetsMod from './systems/assets.js';
-import * as lightingMod from './render/lighting.js';
-import * as vfxMod from './vfx/library.js';
-import * as animMod from './anim/machineAnim.js';
-import * as a11yMod from './ui/a11y.js';
+import * as perfMod from "./systems/perf.js";
+import * as dynresMod from "./systems/dynres.js";
+import * as assetsMod from "./systems/assets.js";
+import * as lightingMod from "./render/lighting.js";
+import * as vfxMod from "./vfx/library.js";
+import * as animMod from "./anim/machineAnim.js";
+import * as a11yMod from "./ui/a11y.js";
 
 // ------------------------------------------------------------------ glue helpers
 
 /** Fetch a required function export; report clearly and return a no-op if absent. */
 function requireFn(ns, name, file) {
   const fn = ns[name];
-  if (typeof fn === 'function') return fn;
+  if (typeof fn === "function") return fn;
   console.error(`[main] missing export "${name}" in ${file}`);
   return () => {};
 }
@@ -72,9 +72,11 @@ function requireFn(ns, name, file) {
  * falls back to an `.update` method on the object returned by the create call.
  */
 function resolveStep(ns, modName, api, file) {
-  if (typeof ns[modName] === 'function') return ns[modName];
-  if (api && typeof api.update === 'function') return (dt) => api.update(dt);
-  console.error(`[main] no update step for ${file} (tried "${modName}" and api.update)`);
+  if (typeof ns[modName] === "function") return ns[modName];
+  if (api && typeof api.update === "function") return (dt) => api.update(dt);
+  console.error(
+    `[main] no update step for ${file} (tried "${modName}" and api.update)`,
+  );
   return null;
 }
 
@@ -87,13 +89,46 @@ function resolveStep(ns, modName, api, file) {
 // below high) and the cinematic grade's grain/aberration intensity (cheap
 // either way, just dialed down on low for a cleaner low-end look).
 const QUALITY_PRESETS = {
-  high: { pixelRatio: 1.5, shadows: true, mapSize: 2048, bloom: 0.55, bloomScale: 1, smaa: true, ao: true, godrays: true, cinematic: 1 },
-  medium: { pixelRatio: 1.25, shadows: true, mapSize: 1024, bloom: 0.4, bloomScale: 0.75, smaa: false, ao: false, godrays: false, cinematic: 0.7 },
-  low: { pixelRatio: 1, shadows: false, mapSize: 0, bloom: 0, bloomScale: 0.5, smaa: false, ao: false, godrays: false, cinematic: 0 },
+  high: {
+    pixelRatio: 1.5,
+    shadows: true,
+    mapSize: 2048,
+    bloom: 0.55,
+    bloomScale: 1,
+    smaa: true,
+    ao: true,
+    godrays: true,
+    cinematic: 1,
+  },
+  medium: {
+    pixelRatio: 1.25,
+    shadows: true,
+    mapSize: 1024,
+    bloom: 0.4,
+    bloomScale: 0.75,
+    smaa: false,
+    ao: false,
+    godrays: false,
+    cinematic: 0.7,
+  },
+  low: {
+    pixelRatio: 1,
+    shadows: false,
+    mapSize: 0,
+    bloom: 0,
+    bloomScale: 0.5,
+    smaa: false,
+    ao: false,
+    godrays: false,
+    cinematic: 0,
+  },
 };
 
 let sunLight = null; // shadow-casting key light, found once via scene traverse
-let composer = null, bloomPass = null, smaaPass = null, aoPass = null; // v4 post-processing (set in boot)
+let composer = null,
+  bloomPass = null,
+  smaaPass = null,
+  aoPass = null; // v4 post-processing (set in boot)
 let godrayPass = null; // v6 volumetric light shaft pass (set in boot)
 let gradePass = null; // v6: grade/vignette/grain/aberration pass (set in boot; needs per-frame uTime)
 let bloomScale = 1; // current quality tier's bloom render-target scale vs. full res
@@ -117,13 +152,13 @@ const GODRAY_SHADER = {
     density: { value: 0.88 },
     weight: { value: 0.28 },
   },
-  vertexShader: /* glsl */`
+  vertexShader: /* glsl */ `
     varying vec2 vUv;
     void main() {
       vUv = uv;
       gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
     }`,
-  fragmentShader: /* glsl */`
+  fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse;
     uniform vec2 lightPos;
     uniform float strength;
@@ -162,13 +197,13 @@ const GRADE_SHADER = {
     grain: { value: 0.028 },
     aberration: { value: 0.0005 },
   },
-  vertexShader: /* glsl */`
+  vertexShader: /* glsl */ `
     varying vec2 vUv;
     void main() {
       vUv = uv;
       gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
     }`,
-  fragmentShader: /* glsl */`
+  fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse;
     uniform float contrast;
     uniform float saturation;
@@ -252,7 +287,9 @@ function applyQuality() {
 
   const light = findSunLight();
   if (!light) {
-    console.error('[main] applyQuality: no shadow-casting DirectionalLight in scene');
+    console.error(
+      "[main] applyQuality: no shadow-casting DirectionalLight in scene",
+    );
     return;
   }
   if (preset.shadows) {
@@ -293,7 +330,7 @@ function applyQuality() {
   cinematicAmt = preset.cinematic;
   // v5: the dynamic-resolution controller re-reads base pixel ratio + bounds
   // for the new tier (it owns renderer/composer pixel ratio from here on).
-  if (dynresMod && typeof dynresMod.onQualityChanged === 'function') {
+  if (dynresMod && typeof dynresMod.onQualityChanged === "function") {
     dynresMod.onQualityChanged();
   }
 }
@@ -347,7 +384,10 @@ function updatePostFX(rawDt) {
     godrayPass.uniforms.strength.value = 0;
     return;
   }
-  _sunPoint.copy(G.camera.position).addScaledVector(sunDir, 400).project(G.camera);
+  _sunPoint
+    .copy(G.camera.position)
+    .addScaledVector(sunDir, 400)
+    .project(G.camera);
   const ux = _sunPoint.x * 0.5 + 0.5;
   const uy = _sunPoint.y * 0.5 + 0.5;
   // Fade out as the projected light position moves far outside the visible
@@ -377,10 +417,15 @@ function boot() {
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // Telemetry owns the info-counter cadence: autoReset would zero the draw
+  // call/triangle counters around each render, so frame-start sampling in
+  // systems/perf.js only ever saw zeros. We reset explicitly right before
+  // composer.render() every frame instead (see the frame loop below).
+  renderer.info.autoReset = false;
   // v3: filmic tone mapping for richer highlights/contrast (ARCHITECTURE_V3 integrator row).
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
-  document.getElementById('app').appendChild(renderer.domElement);
+  document.getElementById("app").appendChild(renderer.domElement);
 
   // Scene + camera. Environment owns sky/fog from here on; these are safe first-frame
   // defaults in the day palette so frame 0 is never black.
@@ -392,7 +437,7 @@ function boot() {
     62,
     window.innerWidth / window.innerHeight,
     0.1,
-    900
+    900,
   );
   camera.position.set(0, 6, 20);
 
@@ -418,7 +463,10 @@ function boot() {
   aoPass.blendIntensity = 0.5;
   composer.addPass(aoPass);
   bloomPass = new UnrealBloomPass(
-    new THREE.Vector2(window.innerWidth, window.innerHeight), 0.55, 0.45, 0.82,
+    new THREE.Vector2(window.innerWidth, window.innerHeight),
+    0.55,
+    0.45,
+    0.82,
   );
   composer.addPass(bloomPass);
   // v6: god rays sample the bloomed frame radially toward the sun, so the
@@ -433,28 +481,28 @@ function boot() {
 
   // Settings persistence loads FIRST: saved quality/sens/volumes must be on
   // G.settings before any system (camera, audio, this file) reads them.
-  requireFn(settingsMod, 'loadSettings', 'ui/settings.js')();
+  requireFn(settingsMod, "loadSettings", "ui/settings.js")();
 
   // --- systems, in contract order -------------------------------------------------
 
-  requireFn(terrainMod, 'createTerrain', 'world/terrain.js')();
-  requireFn(environmentMod, 'createEnvironment', 'world/environment.js')();
+  requireFn(terrainMod, "createTerrain", "world/terrain.js")();
+  requireFn(environmentMod, "createEnvironment", "world/environment.js")();
 
   // v5 (wave C): PMREM/IBL environment lighting built from a procedural sky
   // matched to environment.js's palette. Idempotent, never throws, never
   // replaces existing lights/background; per-frame intensity modulation is
   // ticked in the frame loop below.
   try {
-    if (typeof lightingMod.initEnvironmentLighting === 'function') {
+    if (typeof lightingMod.initEnvironmentLighting === "function") {
       lightingMod.initEnvironmentLighting();
     }
   } catch (err) {
-    console.error('[main] initEnvironmentLighting failed:', err);
+    console.error("[main] initEnvironmentLighting failed:", err);
   }
 
   // Weather owns G.weather; environment/terrain/props only read it. Lights now
   // exist, so apply the persisted quality preset once at boot.
-  requireFn(weatherMod, 'createWeather', 'world/weather.js')();
+  requireFn(weatherMod, "createWeather", "world/weather.js")();
   applyQuality();
 
   // v5 (wave B): asset pipeline loaders (GLTF/KTX2/meshopt; Draco on demand).
@@ -464,86 +512,94 @@ function boot() {
   // ({scene, animations}) lets authored machines upgrade themselves later
   // without touching this file again.
   try {
-    if (typeof assetsMod.initAssets === 'function') {
+    if (typeof assetsMod.initAssets === "function") {
       const summary = assetsMod.initAssets({ renderer });
-      console.info('[main] asset pipeline:', summary);
+      console.info("[main] asset pipeline:", summary);
     }
-    if (typeof window !== 'undefined' && typeof assetsMod.instantiate === 'function') {
+    if (
+      typeof window !== "undefined" &&
+      typeof assetsMod.instantiate === "function"
+    ) {
       window.__IW_ASSETS = {
-        instantiate: (id, opts) => assetsMod.instantiate(id, opts).then((obj) => ({
-          scene: obj,
-          animations:
-            obj && obj.userData && obj.userData.clips
-              ? Object.values(obj.userData.clips)
-              : [],
-        })),
+        instantiate: (id, opts) =>
+          assetsMod.instantiate(id, opts).then((obj) => ({
+            scene: obj,
+            animations:
+              obj && obj.userData && obj.userData.clips
+                ? Object.values(obj.userData.clips)
+                : [],
+          })),
         load: assetsMod.load,
       };
     }
   } catch (err) {
-    console.error('[main] asset pipeline init failed:', err);
+    console.error("[main] asset pipeline init failed:", err);
   }
 
-  requireFn(propsMod, 'createProps', 'world/props.js')();
-  requireFn(playerMod, 'createPlayer', 'player/player.js')();
+  requireFn(propsMod, "createProps", "world/props.js")();
+  requireFn(playerMod, "createPlayer", "player/player.js")();
 
   // Spawn on the shore at (0, ?, 8), looking north (-Z, yaw 0) across the lake basin.
   if (G.player && G.player.pos) {
     const groundY =
-      typeof terrainMod.heightAt === 'function' ? terrainMod.heightAt(0, 8) : 0;
+      typeof terrainMod.heightAt === "function" ? terrainMod.heightAt(0, 8) : 0;
     G.player.pos.set(0, groundY + 0.1, 8);
-    if (typeof G.player.yaw === 'number') G.player.yaw = 0;
+    if (typeof G.player.yaw === "number") G.player.yaw = 0;
   }
 
-  const cameraRig = requireFn(cameraMod, 'createCameraRig', 'player/camera.js')();
-  const bowApi = requireFn(bowMod, 'createBow', 'player/bow.js')();
-  requireFn(spearMod, 'createSpear', 'player/spear.js')();
+  const cameraRig = requireFn(
+    cameraMod,
+    "createCameraRig",
+    "player/camera.js",
+  )();
+  const bowApi = requireFn(bowMod, "createBow", "player/bow.js")();
+  requireFn(spearMod, "createSpear", "player/spear.js")();
 
-  requireFn(damageMod, 'createDamageFX', 'combat/damage.js')();
+  requireFn(damageMod, "createDamageFX", "combat/damage.js")();
 
   // Burn tick numbers (combat/status.js); projectiles call applyBurn on fire hits.
-  requireFn(statusMod, 'createStatusFX', 'combat/status.js')();
+  requireFn(statusMod, "createStatusFX", "combat/status.js")();
 
   // World population lives in machines/ai.js; a partial AI module must not kill boot.
   try {
-    requireFn(aiMod, 'populateWorld', 'machines/ai.js')();
+    requireFn(aiMod, "populateWorld", "machines/ai.js")();
   } catch (err) {
-    console.error('[main] populateWorld failed:', err);
+    console.error("[main] populateWorld failed:", err);
   }
 
   // Hunt contracts track spawned machines/pickups; save hooks subscribe last so
   // a snapshot always serializes fully-initialized quest slots.
-  requireFn(questsMod, 'createQuests', 'systems/quests.js')();
-  requireFn(xpMod, 'createXp', 'systems/xp.js')();
-  requireFn(bestiaryMod, 'createBestiary', 'systems/bestiary.js')();
-  requireFn(saveMod, 'initSave', 'systems/save.js')();
+  requireFn(questsMod, "createQuests", "systems/quests.js")();
+  requireFn(xpMod, "createXp", "systems/xp.js")();
+  requireFn(bestiaryMod, "createBestiary", "systems/bestiary.js")();
+  requireFn(saveMod, "initSave", "systems/save.js")();
 
-  requireFn(hudMod, 'createHUD', 'ui/hud.js')();
-  requireFn(menusMod, 'createMenus', 'ui/menus.js')();
+  requireFn(hudMod, "createHUD", "ui/hud.js")();
+  requireFn(menusMod, "createMenus", "ui/menus.js")();
   // Settings modal after menus: menus' gear buttons call settings.openSettings().
-  requireFn(settingsMod, 'createSettings', 'ui/settings.js')();
+  requireFn(settingsMod, "createSettings", "ui/settings.js")();
   // Minimap canvas after HUD; it positions itself under the resources readout.
-  requireFn(minimapMod, 'createMinimap', 'ui/minimap.js')();
-  requireFn(focusMod, 'createFocus', 'ui/focus.js')();
-  requireFn(weakCueMod, 'createWeakCue', 'ui/weakcue.js')();
+  requireFn(minimapMod, "createMinimap", "ui/minimap.js")();
+  requireFn(focusMod, "createFocus", "ui/focus.js")();
+  requireFn(weakCueMod, "createWeakCue", "ui/weakcue.js")();
   // Tips stack anchors above the minimap/resources cluster; create after both.
-  requireFn(tipsMod, 'createTips', 'ui/tips.js')();
-  requireFn(audioMod, 'initAudio', 'audio/audio.js')();
+  requireFn(tipsMod, "createTips", "ui/tips.js")();
+  requireFn(audioMod, "initAudio", "audio/audio.js")();
 
   // v5: accessibility applier (Wave J) - reads persisted a11y settings and
   // publishes window.__IW_A11Y for consumers (camera shake lives there now).
-  requireFn(a11yMod, 'createA11y', 'ui/a11y.js')();
+  requireFn(a11yMod, "createA11y", "ui/a11y.js")();
   // v5 (wave H): pooled VFX engine + named effect library; bus-driven, so
   // boot order only matters for G.scene (it lazy-inits until the scene exists).
   try {
-    requireFn(vfxMod, 'createVfx', 'vfx/library.js')();
+    requireFn(vfxMod, "createVfx", "vfx/library.js")();
   } catch (err) {
-    console.error('[main] createVfx failed:', err);
+    console.error("[main] createVfx failed:", err);
   }
   // v5 (wave A): telemetry HUD (F3) + bounded dynamic-resolution controller.
-  requireFn(perfMod, 'createPerf', 'systems/perf.js')();
-  requireFn(dynresMod, 'createDynRes', 'systems/dynres.js')();
-  if (typeof dynresMod.setContext === 'function') {
+  requireFn(perfMod, "createPerf", "systems/perf.js")();
+  requireFn(dynresMod, "createDynRes", "systems/dynres.js")();
+  if (typeof dynresMod.setContext === "function") {
     dynresMod.setContext({ renderer, composer });
   }
 
@@ -551,49 +607,82 @@ function boot() {
 
   // Player/bow/camera accept either documented shape: module-level update fn or
   // .update method on the created object.
-  const cameraStep = resolveStep(cameraMod, 'updateCamera', cameraRig, 'player/camera.js');
-  const playerStep = resolveStep(playerMod, 'updatePlayer', G.player, 'player/player.js');
-  const bowStep = resolveStep(bowMod, 'updateBow', bowApi, 'player/bow.js');
-  const spearStep = requireFn(spearMod, 'updateSpear', 'player/spear.js');
+  const cameraStep = resolveStep(
+    cameraMod,
+    "updateCamera",
+    cameraRig,
+    "player/camera.js",
+  );
+  const playerStep = resolveStep(
+    playerMod,
+    "updatePlayer",
+    G.player,
+    "player/player.js",
+  );
+  const bowStep = resolveStep(bowMod, "updateBow", bowApi, "player/bow.js");
+  const spearStep = requireFn(spearMod, "updateSpear", "player/spear.js");
 
-  const machinesStep = requireFn(aiMod, 'updateMachines', 'machines/ai.js');
-  const projectilesStep = requireFn(projectilesMod, 'updateProjectiles', 'combat/projectiles.js');
+  const machinesStep = requireFn(aiMod, "updateMachines", "machines/ai.js");
+  const projectilesStep = requireFn(
+    projectilesMod,
+    "updateProjectiles",
+    "combat/projectiles.js",
+  );
   // Hit sparks / damage numbers / smoke pools from combat/damage.js (scaled dt).
-  const damageStep = requireFn(damageMod, 'updateDamageFX', 'combat/damage.js');
+  const damageStep = requireFn(damageMod, "updateDamageFX", "combat/damage.js");
   // Burn DoT + orange tick numbers (scaled dt), then the rain/storm cycle.
-  const statusStep = requireFn(statusMod, 'updateStatusFX', 'combat/status.js');
-  const weatherStep = requireFn(weatherMod, 'updateWeather', 'world/weather.js');
-  const propsStep = requireFn(propsMod, 'updateProps', 'world/props.js');
-  const envStep = requireFn(environmentMod, 'updateEnvironment', 'world/environment.js');
-  const focusStep = requireFn(focusMod, 'updateFocus', 'ui/focus.js');
-  const weakCueStep = requireFn(weakCueMod, 'updateWeakCue', 'ui/weakcue.js');
-  const hudStep = requireFn(hudMod, 'updateHUD', 'ui/hud.js');
-  const menusStep = requireFn(menusMod, 'updateMenus', 'ui/menus.js');
-  const minimapStep = requireFn(minimapMod, 'updateMinimap', 'ui/minimap.js');
-  const tipsStep = requireFn(tipsMod, 'updateTips', 'ui/tips.js');
-  const questsStep = requireFn(questsMod, 'updateQuests', 'systems/quests.js');
-  const xpStep = requireFn(xpMod, 'updateXp', 'systems/xp.js');
+  const statusStep = requireFn(statusMod, "updateStatusFX", "combat/status.js");
+  const weatherStep = requireFn(
+    weatherMod,
+    "updateWeather",
+    "world/weather.js",
+  );
+  const propsStep = requireFn(propsMod, "updateProps", "world/props.js");
+  const envStep = requireFn(
+    environmentMod,
+    "updateEnvironment",
+    "world/environment.js",
+  );
+  const focusStep = requireFn(focusMod, "updateFocus", "ui/focus.js");
+  const weakCueStep = requireFn(weakCueMod, "updateWeakCue", "ui/weakcue.js");
+  const hudStep = requireFn(hudMod, "updateHUD", "ui/hud.js");
+  const menusStep = requireFn(menusMod, "updateMenus", "ui/menus.js");
+  const minimapStep = requireFn(minimapMod, "updateMinimap", "ui/minimap.js");
+  const tipsStep = requireFn(tipsMod, "updateTips", "ui/tips.js");
+  const questsStep = requireFn(questsMod, "updateQuests", "systems/quests.js");
+  const xpStep = requireFn(xpMod, "updateXp", "systems/xp.js");
   // save.js exports updateSave plus the documented `tick` alias - accept either.
   const saveStep =
-    typeof saveMod.tick === 'function' ? saveMod.tick :
-    typeof saveMod.updateSave === 'function' ? saveMod.updateSave : null;
+    typeof saveMod.tick === "function"
+      ? saveMod.tick
+      : typeof saveMod.updateSave === "function"
+        ? saveMod.updateSave
+        : null;
   if (!saveStep) {
-    console.error('[main] no save tick (tried "tick" and "updateSave" in systems/save.js)');
+    console.error(
+      '[main] no save tick (tried "tick" and "updateSave" in systems/save.js)',
+    );
   }
   // Audio is bus-driven; a per-frame hook is optional.
-  const audioStep = typeof audioMod.updateAudio === 'function' ? audioMod.updateAudio : null;
+  const audioStep =
+    typeof audioMod.updateAudio === "function" ? audioMod.updateAudio : null;
 
   // v5 campaign steps. perf/dynres tick every frame (telemetry + resolution
   // control run even on the start screen); envLight modulates IBL intensity
   // from weather; vfx/animators tick with scaled gameplay dt.
-  const perfStep = requireFn(perfMod, 'updatePerf', 'systems/perf.js');
-  const dynresStep = requireFn(dynresMod, 'updateDynRes', 'systems/dynres.js');
-  const envLightStep = typeof lightingMod.updateEnvironmentLighting === 'function'
-    ? lightingMod.updateEnvironmentLighting
-    : null;
-  const vfxStep = requireFn(vfxMod, 'updateVfx', 'vfx/library.js');
+  const perfStep = requireFn(perfMod, "updatePerf", "systems/perf.js");
+  const dynresStep = requireFn(dynresMod, "updateDynRes", "systems/dynres.js");
+  const envLightStep =
+    typeof lightingMod.updateEnvironmentLighting === "function"
+      ? lightingMod.updateEnvironmentLighting
+      : null;
+  const vfxStep = requireFn(vfxMod, "updateVfx", "vfx/library.js");
   // Machine animators (wave E): one line after the machines tick, as designed.
-  const animatorsStep = requireFn(animMod, 'updateMachineAnimators', 'anim/machineAnim.js');
+  const animatorsStep = requireFn(
+    animMod,
+    "updateMachineAnimators",
+    "anim/machineAnim.js",
+  );
 
   // --- frame loop -----------------------------------------------------------------
 
@@ -603,18 +692,23 @@ function boot() {
   // burst of events cannot freeze the frame for long.
   let _hitstopLeft = 0;
   let _hitstopScale = 1;
-  bus.on('hitstop', (e) => {
-    const dur = e && typeof e.duration === 'number' ? e.duration : 0.06;
+  bus.on("hitstop", (e) => {
+    const dur = e && typeof e.duration === "number" ? e.duration : 0.06;
     _hitstopLeft = Math.min(Math.max(dur, 0), 0.35);
-    const sc = e && typeof e.scale === 'number' ? e.scale : 0.25;
+    const sc = e && typeof e.scale === "number" ? e.scale : 0.25;
     _hitstopScale = Math.min(Math.max(sc, 0), 1);
   });
 
   const clock = new THREE.Clock();
   renderer.setAnimationLoop(() => {
-    const rawDt = clamp(clock.getDelta(), 0, 0.05);
+    // Telemetry honesty: perfStep gets the UNCLAMPED delta (its own 250ms
+    // gap-cap handles tab resumes), so real hitches >=50ms are recorded at
+    // their true length instead of piling up as exact-50.0ms percentiles.
+    // Everything downstream keeps the sim-stability clamp.
+    const unclampedDelta = clock.getDelta();
+    const rawDt = clamp(unclampedDelta, 0, 0.05);
     Input.beginFrame();
-    perfStep(rawDt); // telemetry first: this frame's dt is the sample
+    perfStep(unclampedDelta); // telemetry first: this frame's dt is the sample
     dynresStep(rawDt); // bounded render-scale control (3D only)
     if (envLightStep) envLightStep(rawDt);
     updatePostFX(rawDt);
@@ -624,7 +718,7 @@ function boot() {
       _hitstopLeft -= rawDt;
       hsScale = _hitstopScale;
     }
-    perfMod.beginMark('sim');
+    perfMod.beginMark("sim");
     if (G.started && !G.paused && !G.gameOver) {
       const dt = rawDt * G.timeScale * hsScale;
       G.elapsed += dt;
@@ -656,7 +750,7 @@ function boot() {
       hudStep(rawDt);
       menusStep();
     }
-    perfMod.endMark('sim');
+    perfMod.endMark("sim");
 
     // Audio expects a tick every frame (it gates its audible layers on game
     // state itself). The save tick keeps running through pause so updateSave's
@@ -668,14 +762,19 @@ function boot() {
     // One-shot key presses were polled by the systems above; clear them now.
     Input.endFrame();
 
-    perfMod.beginMark('render-submit');
+    perfMod.beginMark("render-submit");
+    // renderer.info.autoReset is disabled at boot (below) so the F3/telemetry
+    // capture - which samples at frame START, before this render - always sees
+    // the LAST COMPLETED frame's draw-call/triangle totals. Reset here, right
+    // before submitting, so the upcoming render accumulates from zero.
+    renderer.info.reset();
     composer.render();
-    perfMod.endMark('render-submit');
+    perfMod.endMark("render-submit");
   });
 
   // --- global handlers ------------------------------------------------------------
 
-  window.addEventListener('resize', () => {
+  window.addEventListener("resize", () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -687,24 +786,24 @@ function boot() {
   });
 
   // Right mouse is aim-hold; never show the browser context menu.
-  window.addEventListener('contextmenu', (e) => e.preventDefault());
+  window.addEventListener("contextmenu", (e) => e.preventDefault());
 
   // Page teardown: stop weather loops and release its GPU/DOM resources
   // (bfcache entry, SPA-style embeds). A normal restart is a full reload,
   // but an explicit dispose keeps the module's contract honest.
-  window.addEventListener('pagehide', () => {
+  window.addEventListener("pagehide", () => {
     if (weatherMod.disposeWeather) weatherMod.disposeWeather();
   });
 
   // Tab hidden -> force pause; menus own the resume flow.
-  document.addEventListener('visibilitychange', () => {
+  document.addEventListener("visibilitychange", () => {
     if (document.hidden) G.paused = true;
   });
 
   // Quality changes re-apply pixel ratio + sun shadow map live; volume/sens/
   // invert-Y are applied by audio.js and camera.js from the same event.
-  bus.on('settingsChanged', (e) => {
-    if (e && e.key === 'quality') applyQuality();
+  bus.on("settingsChanged", (e) => {
+    if (e && e.key === "quality") applyQuality();
   });
 
   // Dev/test hook: lets tooling and console inspection reach live game state
@@ -712,7 +811,11 @@ function boot() {
   // dynres/perf module refs let E2E drive deterministic frame-time sequences
   // while G.paused keeps the real loop's own updateDynRes calls inert.
   window.__IW = {
-    G, Input, bus, renderer, composer,
+    G,
+    Input,
+    bus,
+    renderer,
+    composer,
     dynres: dynresMod,
     perf: perfMod,
   };
