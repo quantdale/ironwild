@@ -14,7 +14,11 @@ test('20s mixed session stays console-clean', async ({ page }) => {
   // Wall-clock budget: under headless SwiftShader the sim crawls near 1fps,
   // so the same ~20 game-second session takes minutes of wall clock. The spec
   // asserts CONSOLE cleanliness over a mixed session, not session duration.
-  test.setTimeout(300_000);
+  // Budget math (not a guess): rawDt is clamped to 0.05s/frame, so at ~1fps
+  // G.elapsed accrues <=0.05s per wall second -> the >8s gameplay-clock
+  // invariant alone needs >=160s of unpaused wall time there, on top of
+  // action latency. 420s covers that with margin; hardware GL finishes in ~15s.
+  test.setTimeout(420_000);
   const consoleLog = watchConsole(page); // attach BEFORE navigation
   await startGame(page);
   await waitControlSettled(page);
@@ -96,8 +100,14 @@ test('20s mixed session stays console-clean', async ({ page }) => {
   await page.waitForTimeout(400);
   await page.keyboard.up('KeyS');
 
-  // --- idle render tail; the game keeps simulating ---
-  await page.waitForTimeout(2000);
+  // --- idle render tail; the game keeps simulating. Wait on the scaled
+  // gameplay clock ITSELF rather than assuming a wall-clock duration maps to
+  // N game-seconds: at 60fps the scripted sequence above spans only ~6
+  // game-seconds, while at ~1fps software GL the same clicks span minutes.
+  // The invariant under test is unchanged (the clock really advanced >8s).
+  await expect
+    .poll(() => page.evaluate(() => window.__IW.G.elapsed), { timeout: 120_000 })
+    .toBeGreaterThan(8);
   await page.mouse.move(700, 300, { steps: 4 });
 
   const finalState = await page.evaluate(() => ({
