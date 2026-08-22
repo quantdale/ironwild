@@ -2,7 +2,9 @@
 // resolution (renderer pixel ratio + canvas backing-store size), persist to
 // localStorage ('ironwild-settings'), and survive a reload.
 import { expect, test } from "@playwright/test";
-import { gotoGame, SWGL_POLL_MS } from "./helpers.js";
+import { gotoGame, SWGL_POLL_MS, SWGL_SPEC_MS } from "./helpers.js";
+
+test.setTimeout(SWGL_SPEC_MS); // starved-host ceiling; hardware exits in seconds
 
 const VIEW_W = 1280; // playwright.config.js viewport width
 

@@ -10,7 +10,7 @@
 // import (module state is otherwise shared across tests), mirroring the
 // established pattern in status-burn.test.js.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
 
 // ---------------------------------------------------------------------------
 // Window-listener capture. Installed once per test file: vitest gives each file
@@ -18,6 +18,19 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // safe here. The registry is cleared in beforeEach so stale handlers from a
 // previous test's Input instance can never fire.
 const handlers = new Map(); // type -> [fn]
+
+// The pointer-lock lifecycle lives on DOCUMENT events (pointerlockchange),
+// so capture document listeners too (setup.dom.js discards them by default).
+const docHandlers = new Map();
+globalThis.document.addEventListener = (type, fn) => {
+  if (!docHandlers.has(type)) docHandlers.set(type, []);
+  docHandlers.get(type).push(fn);
+};
+
+function fireDoc(type) {
+  const list = docHandlers.get(type) || [];
+  for (const fn of list) fn({});
+}
 
 globalThis.window.addEventListener = (type, fn) => {
   if (!handlers.has(type)) handlers.set(type, []);
@@ -446,5 +459,139 @@ describe("hold/toggle modes (aim + crouch latches)", () => {
     Input.endFrame();
     mouseUp(0);
     keyUp("KeyX");
+  });
+});
+
+describe("pointer-lock fallback watchdog", () => {
+  let nowValue;
+  let InputRef; // describe-scoped binding used by the beginFrameAt helper
+
+  function lockElement(promiseBehavior) {
+    return {
+      requestPointerLock() {
+        return promiseBehavior();
+      },
+    };
+  }
+
+  function beginFrameAt(t) {
+    nowValue = t;
+    InputRef.beginFrame();
+    InputRef.endFrame();
+  }
+
+  beforeEach(async () => {
+    handlers.clear();
+    globalThis.localStorage.clear();
+    vi.resetModules();
+    nowValue = performance.now();
+    vi.spyOn(performance, "now").mockImplementation(() => nowValue);
+    ({ Input: InputRef } = await fresh());
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete globalThis.document.pointerLockElement;
+  });
+
+  it("a never-settling lock promise trips the fallback one frame past the window", async () => {
+    const el = lockElement(() => new Promise(() => {})); // pending forever
+    document.pointerLockElement = null;
+
+    InputRef.lockPointer(el);
+    expect(InputRef.lockBroken).toBe(false);
+
+    beginFrameAt(nowValue + 400); // inside the window: still deciding
+    expect(InputRef.lockBroken).toBe(false);
+
+    beginFrameAt(nowValue + 1500); // past LOCK_WATCHDOG_MS: environment proven
+    expect(InputRef.lockBroken).toBe(true);
+  });
+
+  it("a REJECTED lock attempt is a failure, not a success - watchdog still trips", async () => {
+    const el = lockElement(() =>
+      Promise.reject(new DOMException("x", "NotSupportedError")),
+    );
+    document.pointerLockElement = null;
+
+    InputRef.lockPointer(el);
+    // let the rejection microtask run
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(InputRef.lockBroken).toBe(false); // not immediate: retry counting owns transients
+
+    beginFrameAt(nowValue + 1500);
+    expect(InputRef.lockBroken).toBe(true);
+  });
+
+  it("resolution WITH the lock clears the attempt; broken stays false", async () => {
+    let resolveLock;
+    const el = lockElement(
+      () =>
+        new Promise((res) => {
+          resolveLock = res;
+        }),
+    );
+    document.pointerLockElement = null;
+
+    // Per spec the element becomes locked synchronously AT resolution, so:
+    // request first (guard sees no lock), then hold the lock, then settle.
+    InputRef.lockPointer(el);
+    document.pointerLockElement = el;
+    expect(resolveLock).toBeTypeOf("function");
+    resolveLock();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    beginFrameAt(nowValue + 5000); // far past the window
+    expect(InputRef.lockBroken).toBe(false);
+  });
+
+  it("a lock dropped within the watchdog window is INVOLUNTARY: fallback trips", async () => {
+    const el = lockElement(() => new Promise(() => {}));
+    InputRef.lockPointer(el); // establish _element + a pending attempt
+    // engage...
+    document.pointerLockElement = el;
+    fireDoc("pointerlockchange");
+    expect(InputRef.locked).toBe(true);
+    expect(InputRef.lockBroken).toBe(false);
+
+    // ...and lose it again almost immediately (starved compositor / headless
+    // GPU process). No user Esc happens this early in a lock's life.
+    beginFrameAt(nowValue + 200); // advance the (mocked) clock 200ms
+    document.pointerLockElement = null;
+    fireDoc("pointerlockchange");
+    expect(InputRef.locked).toBe(false);
+    expect(InputRef.lockBroken).toBe(true); // single strike: nothing else would ever retry
+  });
+
+  it("a LATE unlock (user Esc during play) does NOT mark the environment broken", async () => {
+    const el = lockElement(() => new Promise(() => {}));
+    InputRef.lockPointer(el);
+    document.pointerLockElement = el;
+    fireDoc("pointerlockchange");
+    expect(InputRef.locked).toBe(true);
+
+    beginFrameAt(nowValue + 60_000); // a minute of gameplay, then the user exits
+    document.pointerLockElement = null;
+    fireDoc("pointerlockchange");
+    expect(InputRef.lockBroken).toBe(false);
+  });
+
+  it("a later SUSTAINED relock self-heals a previously broken session", async () => {
+    const el = lockElement(() => new Promise(() => {}));
+    InputRef.lockPointer(el);
+    document.pointerLockElement = el;
+    fireDoc("pointerlockchange");
+    beginFrameAt(nowValue + 200);
+    document.pointerLockElement = null;
+    fireDoc("pointerlockchange");
+    expect(InputRef.lockBroken).toBe(true);
+
+    // The environment manages a real lock afterwards (e.g. load subsided).
+    document.pointerLockElement = el;
+    fireDoc("pointerlockchange");
+    expect(InputRef.lockBroken).toBe(false);
+    expect(InputRef.locked).toBe(true);
   });
 });

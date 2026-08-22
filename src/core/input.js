@@ -78,6 +78,13 @@ class InputManager {
    */
   static LOCK_WATCHDOG_MS = 1000;
 
+  /**
+   * How long a held lock must survive (ms) before this session counts as
+   * "environment can sustain locks" - see the drop-classification comment in
+   * the pointerlockchange handler.
+   */
+  static LOCK_SUSTAINED_MS = 5000;
+
   constructor() {
     this.keys = new Set(); // currently held KeyboardEvent.code values
     this.pressedSet = new Set(); // keys pressed since the last endFrame()
@@ -102,6 +109,16 @@ class InputManager {
     // dodges were droppable on loaded or slow machines. Mirrors pressedSet:
     // marked at event time, consumed by exactly one frame, cleared in endFrame.
     this._edgePending = new Set();
+    // Outstanding requestPointerLock attempt: { element, at } or null. Evaluated
+    // by the frame watchdog in beginFrame - see lockPointer().
+    this._lockAttempt = null;
+    // performance.now() of the last successful lock ENGAGEMENT - used to tell
+    // involuntary drops (environment killed the lock almost immediately)
+    // apart from user-initiated exits in the pointerlockchange handler.
+    this._lockEngagedAt = null;
+    // True once any lock has survived LOCK_SUSTAINED_MS: after that point the
+    // environment has proven it CAN hold locks, so later drops are user exits.
+    this._lockEverSustained = false;
     this._crouchLatch = false; // toggle-mode state (crouchMode === 'toggle')
     this._aimLatch = false; // toggle-mode state (aimMode === 'toggle')
 
@@ -172,12 +189,29 @@ class InputManager {
       { passive: true },
     );
     document.addEventListener("pointerlockchange", () => {
-      this.locked = document.pointerLockElement === this._element;
-      if (this.locked) {
+      const nowLocked = document.pointerLockElement === this._element;
+      this.locked = nowLocked;
+      if (nowLocked) {
         lockFails = 0; // a real lock clears the failure streak...
         this.lockBroken = false; // ...so transient errors can't degrade the session
+        this._lockAttempt = null; // watchdog satisfied - stop evaluating
+        this._lockEngagedAt = performance.now();
       } else {
         this.keys.clear();
+        this._lockAttempt = null;
+        // Drop classification. A duration threshold CANNOT tell "environment
+        // killed the lock" from "user pressed Esc": under a starved compositor
+        // locks die at arbitrary ages without any user input. The reliable
+        // discriminator is whether THIS SESSION has ever held a lock long
+        // enough to prove the environment can sustain one. Until then, every
+        // drop is treated as involuntary -> free-cursor fallback (instead of
+        // the menus grace auto-pause, which would deadlock a game the player
+        // cannot steer). After the first sustained lock, normal semantics
+        // return: drops are user exits and trigger the usual auto-pause.
+        if (this._lockEngagedAt != null && !this._lockEverSustained) {
+          this.lockBroken = true;
+        }
+        this._lockEngagedAt = null;
       }
       if (this._onLockChange) this._onLockChange(this.locked);
     });
@@ -226,29 +260,48 @@ class InputManager {
       // lock is proof the environment won't do pointer lock: trip the
       // free-cursor fallback immediately instead of waiting forever.
       //
-      // A third pathology exists: some environments return a promise that
-      // NEVER SETTLES - no resolution, no rejection, no pointerlockerror, no
-      // lock. Neither callback above would ever run, and the menus-layer
-      // grace auto-pause (which waits for locked OR lockBroken) would pause a
-      // game the player can see but not steer. The watchdog below closes that
-      // case: if the element still is not locked when it fires, this
-      // environment has proven itself lock-incapable and gets the same
-      // free-cursor fallback. A real browser always settles within
-      // milliseconds, so the watchdog is inert there; and if a slow-but-real
-      // lock engages after the watchdog fired, pointerlockchange sets
-      // locked=true and clears lockBroken (self-healing).
+      // A second pathology: some environments return a promise that NEVER
+      // SETTLES - no resolution, no rejection, no pointerlockerror, no lock.
+      // A third: under a starved event loop the attempt REJECTS (compositor
+      // cannot service the lock) as the FIRST failure of the session - one
+      // pointerlockerror only increments the retry counter, so neither
+      // locked nor lockBroken would ever be set and the menus-layer grace
+      // auto-pause would pause a game the player can see but not steer.
+      // Both are closed by tracking the attempt and evaluating it on EVERY
+      // FRAME in beginFrame (frame-driven, immune to timer throttling): if
+      // LOCK_WATCHDOG_MS passes without a real lock, this environment has
+      // proven itself lock-incapable and gets the free-cursor fallback. A
+      // real browser settles within milliseconds, so this is inert there;
+      // a slow-but-real later lock self-heals via pointerlockchange.
+      this._lockAttempt = { element, at: performance.now() };
       try {
         const p = element.requestPointerLock?.();
         if (p && typeof p.then === "function") {
-          const watchdog = setTimeout(() => {
-            if (document.pointerLockElement !== element) this.lockBroken = true;
-          }, InputManager.LOCK_WATCHDOG_MS);
+          // The attempt record is deliberately NOT cleared on rejection:
+          // a rejected lock is a failure, not a success - let the frame
+          // watchdog decide once the window has elapsed.
           p.then(() => {
-            clearTimeout(watchdog);
-            if (document.pointerLockElement !== element) this.lockBroken = true;
+            if (document.pointerLockElement === element) {
+              this._lockAttempt = null;
+              // Per spec the element is locked SYNCHRONOUSLY at resolution -
+              // reflect it immediately instead of waiting for the
+              // pointerlockchange event. Under a starved event loop that
+              // event can lag seconds behind; reporting unlocked in the gap
+              // would let the menus grace auto-pause fire even though the
+              // session does hold the lock.
+              this.locked = true;
+              // Stamp the engagement HERE as well: a starved environment can
+              // lose the lock again before the pointerlockchange event is
+              // observed, collapsing engage+drop into one unlock event -
+              // without this stamp that drop looks like "never engaged" and
+              // evades involuntary-drop detection.
+              this._lockEngagedAt = performance.now();
+            } else {
+              this.lockBroken = true; // resolved WITHOUT holding the lock
+              this._lockAttempt = null;
+            }
           }).catch(() => {
-            clearTimeout(watchdog);
-            /* pointerlockerror listener owns counting */
+            /* keep the attempt running - see above */
           });
         }
       } catch {
@@ -420,6 +473,35 @@ class InputManager {
     // behave exactly like a physical Esc tap. Settings-modal Esc handling is
     // DOM-level and intentionally not reachable from here.
     if (getGamepadState().startEdge) this.pressedSet.add("Escape");
+
+    // Lock-attempt watchdog (frame-driven; see lockPointer): once
+    // LOCK_WATCHDOG_MS has elapsed since the request without the element
+    // actually becoming locked, the environment has proven it cannot hold
+    // pointer lock - trip the free-cursor fallback. Checked here rather than
+    // in a setTimeout so heavy timer throttling cannot delay the fallback
+    // past the menus layer's relock grace.
+    const la = this._lockAttempt;
+    if (
+      la &&
+      document.pointerLockElement !== la.element &&
+      performance.now() - la.at >= InputManager.LOCK_WATCHDOG_MS
+    ) {
+      this.lockBroken = true;
+      this._lockAttempt = null;
+    }
+
+    // Sustained-lock proof: one lock surviving LOCK_SUSTAINED_MS upgrades the
+    // session to "environment can hold locks" (see drop classification in
+    // pointerlockchange). Checked per frame - immune to timer throttling.
+    if (
+      !this._lockEverSustained &&
+      this.locked &&
+      this._lockEngagedAt != null &&
+      performance.now() - this._lockEngagedAt >=
+        InputManager.LOCK_SUSTAINED_MS
+    ) {
+      this._lockEverSustained = true;
+    }
 
     for (const action of Object.keys(DEFAULT_BINDINGS)) {
       // OR the pending event-time edge into the held-state poll: a tap that
