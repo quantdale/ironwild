@@ -132,10 +132,11 @@ describe('boot safety with zero authored assets (gap 3E)', () => {
   it('load() on a url:null entry rejects fast, marks NOTHING broken, touches no loader', async () => {
     const { manifest, assets } = await loadFresh();
     const calls = installFakeLoader(assets, { gltf: makeGltf() });
-    // 'ironmaw' remains a url:null placeholder (skitter/hunter/wayshrine ship).
-    const entry = manifest.ASSET_MANIFEST.machines.ironmaw;
+    // 'ruin_kit' remains the only url:null placeholder (machines/hunter/
+    // wayshrine ship).
+    const entry = manifest.ASSET_MANIFEST.env.ruin_kit;
 
-    await expect(assets.load('ironmaw')).rejects.toThrow(/not authored yet/);
+    await expect(assets.load('ruin_kit')).rejects.toThrow(/not authored yet/);
     expect(calls).toHaveLength(0); // never reached the network layer
     expect(entry.failed).toBeUndefined(); // placeholder != session failure
     expect(assets.getStats()).toEqual({ cached: 0, loading: 0, failed: 0, refs: 0 });
@@ -146,10 +147,10 @@ describe('boot safety with zero authored assets (gap 3E)', () => {
     const { manifest, assets } = await loadFresh();
     installFakeLoader(assets, { gltf: makeGltf() });
     for (let i = 0; i < 3; i++) {
-      await expect(assets.load('ironmaw')).rejects.toThrow(/not authored yet/);
-      await expect(assets.instantiate('ironmaw')).rejects.toThrow(/not authored yet/);
+      await expect(assets.load('ruin_kit')).rejects.toThrow(/not authored yet/);
+      await expect(assets.instantiate('ruin_kit')).rejects.toThrow(/not authored yet/);
     }
-    const entry = manifest.ASSET_MANIFEST.machines.ironmaw;
+    const entry = manifest.ASSET_MANIFEST.env.ruin_kit;
     expect(entry.failed).toBeUndefined();
     expect(assets.getStats().failed).toBe(0);
     expect(warnSpy).not.toHaveBeenCalled();
@@ -158,7 +159,7 @@ describe('boot safety with zero authored assets (gap 3E)', () => {
   it('preload() silently skips unauthored ids and still warns once on unknown ids', async () => {
     const { assets } = await loadFresh();
     const calls = installFakeLoader(assets, { gltf: makeGltf() });
-    assets.preload(['ruin_kit', 'duskwing', 'ironmaw', 'ghost']);
+    assets.preload(['ruin_kit', 'ghost']);
     await Promise.resolve(); // drain microtasks: any swallowed rejection lands here
     expect(calls).toHaveLength(0);
     expect(warnSpy).toHaveBeenCalledTimes(1); // only the unknown-id warning
@@ -170,7 +171,7 @@ describe('boot safety with zero authored assets (gap 3E)', () => {
     const { assets } = await loadFresh();
     const calls = installFakeLoader(assets, { gltf: makeGltf() });
     vi.useFakeTimers();
-    assets.prefetch(['duskwing']);
+    assets.prefetch(['ruin_kit']);
     await vi.advanceTimersByTimeAsync(200); // well past the 32ms drain cadence
     expect(calls).toHaveLength(0);
     expect(assets.getStats().cached).toBe(0);

@@ -63,32 +63,36 @@ test("skitter machines upgrade to the authored animator", async ({ page }) => {
   await gotoGame(page);
   await startGame(page);
 
-  // Every live skitter must have flipped its animator to authored mode once
-  // the GLB resolves (procedural visuals hidden, AnimGraph driving clips).
+  // EVERY authored machine type (skitter/ironmaw/duskwing) must flip its
+  // animator to authored mode once its GLB resolves; procedural visuals stay
+  // retired. Machines of a type with no authored GLB keep procedural mode -
+  // today that set is empty except non-rigged vantage/monarch records.
   const probe = await page.evaluate(() => {
     const G = window.__IW.G;
-    let skitters = 0;
-    let authored = 0;
+    const AUTHORED = new Set(["skitter", "ironmaw", "duskwing"]);
+    const per = {};
+    let mismatched = 0;
     for (const m of G.machines) {
-      if (m.type !== "skitter" || !m.alive || !m.animator) continue;
-      skitters++;
-      if (m.animator.mode === "authored") authored++;
-      if (authored === 1 && skitters === 1) {
-        // First one: confirm the procedural meshes were retired.
-        m.group.traverse((o) => {
-          if (o.isMesh && o.visible) o._iwVisible = true;
-        });
+      if (!m.alive || !m.animator) continue;
+      if (!AUTHORED.has(m.type)) continue;
+      per[m.type] = per[m.type] || { n: 0, authored: 0 };
+      per[m.type].n++;
+      if (m.animator.mode === "authored") {
+        per[m.type].authored++;
+      } else {
+        mismatched++;
       }
     }
-    return { skitters, authored };
+    return { per, mismatched };
   });
 
-  expect(probe.skitters).toBeGreaterThan(0);
-  expect(probe.authored).toBe(probe.skitters);
+  expect(Object.keys(probe.per).length).toBe(3);
+  expect(probe.mismatched).toBe(0);
 
-  // The world must still be simulating (no pause/regression from the swap).
+  // The world must still be simulating (no pause/regression from the swaps).
   expect(await page.evaluate(() => window.__IW.G.paused)).toBe(false);
 });
+
 
 test("certification asset loads through the real pipeline", async ({ page }) => {
   test.setTimeout(SWGL_SPEC_MS);

@@ -84,8 +84,9 @@ export const ASSET_MANIFEST = {
     },
     ironmaw: {
       id: 'ironmaw',
-      // Unauthored placeholder - see skitter note above.
-      url: null, // ASSET_ROOT + 'machines/ironmaw.glb'
+      // Authored-placeholder tier (scripts/create-machines-assets.mjs):
+      // mass/armor rig; charge visuals stay procedural until playAttack wires.
+      url: ASSET_ROOT + 'machines/ironmaw.glb',
       lods: null,
       clips: ['loc_idle', 'loc_walk_fwd', 'loc_run_fwd', 'react_hit', 'react_death'],
       sockets: ['socket_jaw', 'socket_spine'],
@@ -98,8 +99,8 @@ export const ASSET_MANIFEST = {
       // Aerial machine: ground locomotion clips are expected-but-optional;
       // authored kit may replace them with flight cycles under the same names.
       id: 'duskwing',
-      // Unauthored placeholder - see skitter note above.
-      url: null, // ASSET_ROOT + 'machines/duskwing.glb'
+      // Authored-placeholder tier: loc_* carry hover/cruise/fast-flight.
+      url: ASSET_ROOT + 'machines/duskwing.glb',
       lods: null,
       clips: ['loc_idle', 'loc_walk_fwd', 'loc_run_fwd', 'react_hit', 'react_death'],
       sockets: ['socket_beak'],

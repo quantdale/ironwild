@@ -1,0 +1,9 @@
+{
+  "id": "duskwing",
+  "generatedBy": "scripts/create-machines-assets.mjs",
+  "authoredBy": "IRONWILD project (procedural, in-repo)",
+  "license": "MIT",
+  "modified": false,
+  "purpose": "authored placeholder - aerial archetype; loc_* carry hover/cruise/fast flight",
+  "created": "2026-08-22T21:11:47.811Z"
+}
