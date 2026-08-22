@@ -140,6 +140,40 @@ describe('action frame semantics', () => {
     Input.endFrame();
   });
 
+  it('a tap that starts AND ends between frames still yields one rising edge', async () => {
+    // Regression: edges were derived purely from held-state polling, so a tap
+    // shorter than one frame gap (loaded machine / low fps) was invisible -
+    // keydown added the code to keys, keyup removed it, and no beginFrame ever
+    // sampled it as down. Event-time edge capture now mirrors pressedSet.
+    const { Input } = await fresh();
+
+    keyDown('KeyE');
+    keyUp('KeyE'); // entire press happens with NO beginFrame in between
+    expect(Input.keys.has('KeyE')).toBe(false); // hold state is already gone...
+
+    Input.beginFrame(); // ...but the next frame must still see the edge
+    expect(Input.wasActionPressed('interact')).toBe(true);
+    expect(Input.isAction('interact')).toBe(true); // one-frame virtual hold
+    Input.endFrame();
+
+    Input.beginFrame(); // edge is single-shot: gone the frame after
+    expect(Input.wasActionPressed('interact')).toBe(false);
+    expect(Input.isAction('interact')).toBe(false);
+    Input.endFrame();
+  });
+
+  it('sub-frame mouse taps produce fire/aim edges exactly once', async () => {
+    const { Input } = await fresh();
+    mouseDown(0);
+    mouseUp(0); // full LMB tap inside one frame gap
+    Input.beginFrame();
+    expect(Input.wasActionPressed('fire')).toBe(true);
+    Input.endFrame();
+    Input.beginFrame();
+    expect(Input.wasActionPressed('fire')).toBe(false);
+    Input.endFrame();
+  });
+
   it('wasActionPressed fires on the rising edge exactly once per press', async () => {
     const { Input } = await fresh();
 
@@ -164,17 +198,20 @@ describe('action frame semantics', () => {
     Input.endFrame();
   });
 
-  it('sub-frame tap-and-release: edge API misses it while raw pressed() catches it', async () => {
-    // Documented semantic (not a bug): wasActionPressed samples the keys SET at
-    // beginFrame, so a press+release entirely between frames is invisible to
-    // actions. Human taps always span frames, and gamepad edges always worked
-    // this way; one-shot consumers migrated in 3C accept this equivalence.
+  it('sub-frame tap-and-release: edge API now catches it like raw pressed()', async () => {
+    // FIXED semantic (was documented as a known gap): edges are captured at
+    // EVENT time and survive until the next frame, so a press+release entirely
+    // between frames yields one action edge exactly like pressedSet does for
+    // raw keys. Human taps on loaded/low-fps machines no longer drop inputs.
     const { Input } = await fresh();
     keyDown('Space');
     keyUp('Space');
     Input.beginFrame();
     expect(Input.pressed('Space')).toBe(true);
-    expect(Input.wasActionPressed('jump')).toBe(false);
+    expect(Input.wasActionPressed('jump')).toBe(true);
+    Input.endFrame();
+    Input.beginFrame();
+    expect(Input.wasActionPressed('jump')).toBe(false); // single-shot
     Input.endFrame();
   });
 

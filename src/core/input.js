@@ -69,6 +69,15 @@ const PAD_ACTIONS = {
 };
 
 class InputManager {
+  /**
+   * How long a requestPointerLock promise may stay unsettled (ms) before the
+   * environment is declared lock-incapable and the free-cursor fallback
+   * trips. Must sit BELOW the menus layer's ~1.5s relock grace so a
+   * lock-incapable environment never reaches the grace auto-pause, and far
+   * ABOVE real-browser settlement (milliseconds).
+   */
+  static LOCK_WATCHDOG_MS = 1000;
+
   constructor() {
     this.keys = new Set(); // currently held KeyboardEvent.code values
     this.pressedSet = new Set(); // keys pressed since the last endFrame()
@@ -86,6 +95,13 @@ class InputManager {
     this._effCache = null; // merged defaults+overrides, rebuilt lazily
     this._actionDown = {}; // action -> held this frame (merged sources)
     this._actionPrev = {}; // last frame's _actionDown (edge detection)
+    // Actions whose bound key/button went DOWN since the last beginFrame.
+    // Event-time edge capture: a tap shorter than one frame gap would
+    // otherwise be invisible to the held-state poll below (keys.has is false
+    // again by the time the next frame samples it) - quick interacts/jumps/
+    // dodges were droppable on loaded or slow machines. Mirrors pressedSet:
+    // marked at event time, consumed by exactly one frame, cleared in endFrame.
+    this._edgePending = new Set();
     this._crouchLatch = false; // toggle-mode state (crouchMode === 'toggle')
     this._aimLatch = false; // toggle-mode state (aimMode === 'toggle')
 
@@ -113,6 +129,7 @@ class InputManager {
       if ((e.ctrlKey || e.metaKey || e.altKey) && !selfMod) return;
       this.keys.add(e.code);
       this.pressedSet.add(e.code);
+      this._markActionEdges(e.code);
       if (["Space", "Tab"].includes(e.code)) e.preventDefault();
     });
     window.addEventListener("keyup", (e) => this.keys.delete(e.code));
@@ -121,12 +138,15 @@ class InputManager {
       this.mouseButtons.clear();
       this._actionDown = {};
       this._actionPrev = {}; // no phantom rising edges across a focus loss
+      this._edgePending.clear();
     });
 
     // Mouse-button tracking feeds the 'MouseN' pseudo-bindings only; the real
     // listeners in camera.js / bow.js stay untouched and authoritative.
     window.addEventListener("mousedown", (e) => {
-      this.mouseButtons.add(`Mouse${e.button}`);
+      const code = `Mouse${e.button}`;
+      this.mouseButtons.add(code);
+      this._markActionEdges(code);
     });
     window.addEventListener("mouseup", (e) => {
       this.mouseButtons.delete(`Mouse${e.button}`);
@@ -205,12 +225,29 @@ class InputManager {
       // locked synchronously at resolution, so a resolved promise without the
       // lock is proof the environment won't do pointer lock: trip the
       // free-cursor fallback immediately instead of waiting forever.
+      //
+      // A third pathology exists: some environments return a promise that
+      // NEVER SETTLES - no resolution, no rejection, no pointerlockerror, no
+      // lock. Neither callback above would ever run, and the menus-layer
+      // grace auto-pause (which waits for locked OR lockBroken) would pause a
+      // game the player can see but not steer. The watchdog below closes that
+      // case: if the element still is not locked when it fires, this
+      // environment has proven itself lock-incapable and gets the same
+      // free-cursor fallback. A real browser always settles within
+      // milliseconds, so the watchdog is inert there; and if a slow-but-real
+      // lock engages after the watchdog fired, pointerlockchange sets
+      // locked=true and clears lockBroken (self-healing).
       try {
         const p = element.requestPointerLock?.();
         if (p && typeof p.then === "function") {
+          const watchdog = setTimeout(() => {
+            if (document.pointerLockElement !== element) this.lockBroken = true;
+          }, InputManager.LOCK_WATCHDOG_MS);
           p.then(() => {
+            clearTimeout(watchdog);
             if (document.pointerLockElement !== element) this.lockBroken = true;
           }).catch(() => {
+            clearTimeout(watchdog);
             /* pointerlockerror listener owns counting */
           });
         }
@@ -341,6 +378,17 @@ class InputManager {
     return merged;
   }
 
+  /**
+   * Mark every action currently bound to `code` as edge-pending. Called from
+   * the keydown/mousedown listeners so rising edges survive sub-frame taps.
+   * Bindings are read at EVENT time (what the user physically pressed under).
+   */
+  _markActionEdges(code) {
+    for (const [action, codes] of Object.entries(this._effective())) {
+      if (codes.includes(code)) this._edgePending.add(action);
+    }
+  }
+
   /** Merged keyboard/mouse/gamepad hold state for one action (no mode logic). */
   _rawAction(action) {
     const codes = this._effective()[action];
@@ -374,7 +422,11 @@ class InputManager {
     if (getGamepadState().startEdge) this.pressedSet.add("Escape");
 
     for (const action of Object.keys(DEFAULT_BINDINGS)) {
-      this._actionDown[action] = this._rawAction(action);
+      // OR the pending event-time edge into the held-state poll: a tap that
+      // started AND ended between frames still reads "down" for exactly this
+      // one frame, producing the rising edge consumers expect.
+      this._actionDown[action] =
+        this._rawAction(action) || this._edgePending.has(action);
     }
     // Rising edge flips the latch once per press; while mode is 'toggle' the
     // latch (not the live hold) is what isAction reports.
@@ -398,6 +450,7 @@ class InputManager {
   endFrame() {
     this.pressedSet.clear();
     this.wheelDelta = 0;
+    this._edgePending.clear(); // edges live for exactly one frame, like pressedSet
     // Action edges: this frame's state becomes next frame's "previous".
     this._actionPrev = { ...this._actionDown };
   }
