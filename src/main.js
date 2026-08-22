@@ -708,8 +708,14 @@ function boot() {
   });
 
   // Dev/test hook: lets tooling and console inspection reach live game state
-  // and the render objects (quality-tier assertions, perf sampling).
-  window.__IW = { G, Input, bus, renderer, composer };
+  // and the render objects (quality-tier assertions, perf sampling). The
+  // dynres/perf module refs let E2E drive deterministic frame-time sequences
+  // while G.paused keeps the real loop's own updateDynRes calls inert.
+  window.__IW = {
+    G, Input, bus, renderer, composer,
+    dynres: dynresMod,
+    perf: perfMod,
+  };
 }
 
 boot();

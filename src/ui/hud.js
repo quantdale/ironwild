@@ -624,6 +624,10 @@ function buildDom() {
     hm, toasts: toastsEl, prompt, vig, obj,
     desat, hitdir, hdSvg, kb, streak,
     xpBar, xpFill, xpLv,
+    // v5: widgets scaled by refreshUiScale must be reachable here -
+    // SCALED_WIDGETS iterates these keys (boot crashed when bars/res/compass
+    // were only locals).
+    bars, res, compass,
   };
 
   // v5: anchor each scalable widget at the corner it is pinned to so
