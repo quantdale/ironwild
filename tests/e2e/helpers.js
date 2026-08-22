@@ -15,7 +15,15 @@ import { expect } from '@playwright/test';
  * line proves unavoidable in headless Chromium. Every entry must carry a
  * `why` that can be quoted verbatim in the test report.
  */
-export const CONSOLE_ALLOWLIST = [];
+export const CONSOLE_ALLOWLIST = [
+  {
+    // Headless CI runs on SwiftShader (software GL); its driver emits this
+    // performance NOTICE whenever ReadPixels stalls the pipe. It is driver
+    // chatter, not application output, and disappears on real GPUs.
+    re: /GPU stall due to ReadPixels/,
+    why: 'SwiftShader software-GL driver perf notice - no GPU in headless CI',
+  },
+];
 
 /**
  * Attach console + pageerror collectors. Returns an object whose `offenses()`

@@ -132,6 +132,8 @@ function installHud() {
     s.pointerEvents = 'none';
     s.whiteSpace = 'pre';
     s.textShadow = '0 1px 2px rgba(0,0,0,0.8)';
+    s.display = 'none'; // hidden by default - hudVisible starts false and
+                        // toggleHud owns the only display flips
     const textEl = document.createElement('div');
     el.appendChild(textEl);
     (document.body || document.documentElement).appendChild(el);

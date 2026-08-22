@@ -252,17 +252,40 @@ export function updateDynRes(rawDt) {
     return;
   }
   const ms = dt * 1000;
+  feedFrameMs(ms, dt);
+}
 
+/**
+ * Shared decision path: push one frame's ms into the moving average and run
+ * the hysteresis decision on its cadence clock. Split out so the E2E debug
+ * seam below feeds byte-identical logic.
+ */
+function feedFrameMs(ms, dtSeconds) {
   if (avgCount < AVG_WINDOW) avgCount++;
   else avgSum -= avgBuf[avgHead];
   avgBuf[avgHead] = ms;
   avgSum += ms;
   avgHead = (avgHead + 1) % AVG_WINDOW;
 
-  decisionT += dt;
+  decisionT += dtSeconds;
   if (decisionT < DECISION_INTERVAL) return;
   decisionT -= DECISION_INTERVAL; // carry the remainder so cadence stays honest
   decide(avgSum / avgCount);
+}
+
+/**
+ * Test/E2E seam: feed synthetic frame times directly into the SAME average +
+ * decision path as real frames, bypassing the hidden/paused activity gates
+ * (a paused game drops ALL frames by design, which would also drop synthetic
+ * ones and make browser specs non-deterministic). Production code never calls
+ * this; window.__IW.dynres exposes it to automation only.
+ */
+export function debugFeed(ms) {
+  if (!enabled) return;
+  const v = Number(ms);
+  if (!Number.isFinite(v) || v <= 0) return;
+  activeLast = true;
+  feedFrameMs(Math.min(v, DT_CLAMP_S * 1000), DECISION_INTERVAL / 10);
 }
 
 /** Current controller scale (number), or null while disabled/unwired. */
