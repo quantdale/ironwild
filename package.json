@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "npm run build && playwright test",
+    "test:e2e:chunked": "node scripts/run-e2e-chunked.mjs",
     "verify": "npm run lint && npm test && npm run test:e2e"
   },
   "license": "MIT",

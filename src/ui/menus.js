@@ -4,34 +4,46 @@
 // v2: Continue button (systems/save.js), fire-arrow crafting, and gear buttons
 // that open the settings modal (ui/settings.js).
 
-import { bus } from '../core/events.js';
-import { G } from '../core/state.js';
-import { Input } from '../core/input.js';
-import * as save from '../systems/save.js';
-import * as settings from './settings.js';
-import { SPECIES, speciesName, speciesLore } from '../systems/bestiary.js';
+import { bus } from "../core/events.js";
+import { G } from "../core/state.js";
+import { Input } from "../core/input.js";
+import * as save from "../systems/save.js";
+import * as settings from "./settings.js";
+import { SPECIES, speciesName, speciesLore } from "../systems/bestiary.js";
 
 const SKILLS = [
-  { id: 'heartier', name: 'Heartier Frame', desc: '+30 max health' },
-  { id: 'steadyAim', name: 'Steady Aim', desc: 'Faster draw, steadier aim' },
-  { id: 'hunterKiller', name: 'Hunter-Killer', desc: '+30% weak-point damage' },
-  { id: 'scavenger', name: 'Scavenger', desc: 'Double resource pickups' },
-  { id: 'secondWind', name: 'Second Wind', desc: 'Dodge costs half stamina' },
-  { id: 'deepFocus', name: 'Deep Focus', desc: '+50% focus duration' },
+  { id: "heartier", name: "Heartier Frame", desc: "+30 max health" },
+  { id: "steadyAim", name: "Steady Aim", desc: "Faster draw, steadier aim" },
+  { id: "hunterKiller", name: "Hunter-Killer", desc: "+30% weak-point damage" },
+  { id: "scavenger", name: "Scavenger", desc: "Double resource pickups" },
+  { id: "secondWind", name: "Second Wind", desc: "Dodge costs half stamina" },
+  { id: "deepFocus", name: "Deep Focus", desc: "+50% focus duration" },
 ];
 
 const CONTROLS = [
-  ['WASD', 'Move'], ['MOUSE', 'Look'], ['HOLD LMB', 'Draw bow / loose arrow'],
-  ['RMB', 'Aim'], ['SHIFT', 'Sprint'], ['SPACE', 'Jump'], ['CTRL', 'Dodge'],
-  ['C', 'Crouch toggle'], ['X', 'Arrow type'], ['E', 'Interact'],
-  ['H', 'Use medicine'], ['HOLD Q', 'Focus scan'], ['P', 'Quicksave'],
-  ['I', 'Inventory'], ['TAB', 'Skills'], ['B', 'Bestiary'], ['ESC', 'Pause'],
+  ["WASD", "Move"],
+  ["MOUSE", "Look"],
+  ["HOLD LMB", "Draw bow / loose arrow"],
+  ["RMB", "Aim"],
+  ["SHIFT", "Sprint"],
+  ["SPACE", "Jump"],
+  ["CTRL", "Dodge"],
+  ["C", "Crouch toggle"],
+  ["X", "Arrow type"],
+  ["E", "Interact"],
+  ["H", "Use medicine"],
+  ["HOLD Q", "Focus scan"],
+  ["P", "Quicksave"],
+  ["I", "Inventory"],
+  ["TAB", "Skills"],
+  ["B", "Bestiary"],
+  ["ESC", "Pause"],
 ];
 
 let created = false;
 let els = null;
-let activePanel = null;          // null | 'pause' | 'inventory' | 'skills' | 'death'
-let graceUntil = 0;              // pause auto-trigger suppressed until relock settles
+let activePanel = null; // null | 'pause' | 'inventory' | 'skills' | 'death'
+let graceUntil = 0; // pause auto-trigger suppressed until relock settles
 let deathHandled = false;
 
 export function createMenus() {
@@ -41,32 +53,32 @@ export function createMenus() {
   buildDom();
 
   // Start on first click anywhere on the start screen.
-  els.start.addEventListener('click', startGame);
+  els.start.addEventListener("click", startGame);
 
-  els.resumeBtn.addEventListener('click', resume);
-  els.quitBtn.addEventListener('click', () => location.reload());
-  els.restartBtn.addEventListener('click', () => location.reload());
-  els.craftArrows.addEventListener('click', craftArrows);
-  els.craftMed.addEventListener('click', craftMedicine);
-  els.craftFire.addEventListener('click', craftFireArrows);
-  els.craftArmor.addEventListener('click', craftArmor);
+  els.resumeBtn.addEventListener("click", resume);
+  els.quitBtn.addEventListener("click", () => location.reload());
+  els.restartBtn.addEventListener("click", () => location.reload());
+  els.craftArrows.addEventListener("click", craftArrows);
+  els.craftMed.addEventListener("click", craftMedicine);
+  els.craftFire.addEventListener("click", craftFireArrows);
+  els.craftArmor.addEventListener("click", craftArmor);
   // Gear buttons open the settings modal; stopPropagation keeps the start
   // screen's click-anywhere-to-begin from also firing.
   const openSettings = (e) => {
     e.stopPropagation();
-    if (typeof settings.openSettings === 'function') settings.openSettings();
+    if (typeof settings.openSettings === "function") settings.openSettings();
   };
-  els.gearStart.addEventListener('click', openSettings);
-  els.gearPause.addEventListener('click', openSettings);
-  if (els.continueBtn) els.continueBtn.addEventListener('click', continueGame);
-  if (els.newRunBtn) els.newRunBtn.addEventListener('click', newRun);
+  els.gearStart.addEventListener("click", openSettings);
+  els.gearPause.addEventListener("click", openSettings);
+  if (els.continueBtn) els.continueBtn.addEventListener("click", continueGame);
+  if (els.newRunBtn) els.newRunBtn.addEventListener("click", newRun);
   for (const def of SKILLS) {
-    els.skillCards[def.id].addEventListener('click', () => buySkill(def));
+    els.skillCards[def.id].addEventListener("click", () => buySkill(def));
   }
 
   // Never let Tab move browser focus.
-  window.addEventListener('keydown', (e) => {
-    if (e.code === 'Tab') e.preventDefault();
+  window.addEventListener("keydown", (e) => {
+    if (e.code === "Tab") e.preventDefault();
   });
 
   // Single lock-change slot (per Input contract) - menus own it.
@@ -75,43 +87,59 @@ export function createMenus() {
   // A rejected relock fires pointerlockerror during Chromium's ~1s post-Esc
   // cooldown; stretch the grace so the fallback auto-pause doesn't flash the
   // pause screen back while the retry settles.
-  document.addEventListener('pointerlockerror', () => {
+  document.addEventListener("pointerlockerror", () => {
     if (G.started && !G.gameOver) {
       graceUntil = Math.max(graceUntil, performance.now() + 1500);
     }
   });
 
-  bus.on('playerDied', onPlayerDied);
+  bus.on("playerDied", onPlayerDied);
 }
 
 export function updateMenus() {
   if (!created || !G.started || G.gameOver) return;
   // Settings modal is up: it owns the keyboard (Escape closes itself via a
   // capture-phase handler); don't toggle panels or auto-pause beneath it.
-  if (typeof settings.isOpen === 'function' && settings.isOpen()) return;
+  if (typeof settings.isOpen === "function" && settings.isOpen()) return;
 
-  if (Input.pressed('KeyI')) {
-    if (activePanel === 'inventory') closePanel();
-    else if (activePanel === null) openPanel('inventory');
+  if (Input.pressed("KeyI")) {
+    if (activePanel === "inventory") closePanel();
+    else if (activePanel === null) openPanel("inventory");
   }
-  if (Input.pressed('Tab')) {
-    if (activePanel === 'skills') closePanel();
-    else if (activePanel === null) openPanel('skills');
+  if (Input.pressed("Tab")) {
+    if (activePanel === "skills") closePanel();
+    else if (activePanel === null) openPanel("skills");
   }
-  if (Input.pressed('KeyB')) {
-    if (activePanel === 'bestiary') closePanel();
-    else if (activePanel === null) openPanel('bestiary');
+  if (Input.pressed("KeyB")) {
+    if (activePanel === "bestiary") closePanel();
+    else if (activePanel === null) openPanel("bestiary");
   }
-  if (Input.pressed('Escape')) {
-    if (activePanel === 'inventory' || activePanel === 'skills' || activePanel === 'bestiary') closePanel();
-    else if (activePanel === 'pause') resume();
-    else if (Input.lockBroken) showPause(); // no lock to lose - Esc must reach pause manually
+  if (Input.pressed("Escape")) {
+    if (
+      activePanel === "inventory" ||
+      activePanel === "skills" ||
+      activePanel === "bestiary"
+    )
+      closePanel();
+    else if (activePanel === "pause") resume();
+    // An Escape that REACHES the page always means "pause". While genuinely
+    // locked the browser consumes Esc itself (exit lock -> onLockChange ->
+    // showPause), so this branch only sees keys from the unlocked states:
+    // lockBroken fallback, a transient denied-relock window, or environments
+    // where lock never engaged. Gating on lockBroken left those windows dead
+    // - Esc did nothing until the grace auto-pause fired.
+    else showPause();
   }
 
   // Fallback: pointer lost without a lock-change callback (missed event,
   // OS-level focus steal). Only after the relock grace window has passed;
   // skipped once Input.lockBroken falls back to free-cursor look.
-  if (!Input.locked && !Input.lockBroken && activePanel === null && performance.now() > graceUntil) {
+  if (
+    !Input.locked &&
+    !Input.lockBroken &&
+    activePanel === null &&
+    performance.now() > graceUntil
+  ) {
     showPause();
   }
 }
@@ -119,8 +147,11 @@ export function updateMenus() {
 // ---------------------------------------------------------------- flow
 
 function getCanvas() {
-  return document.querySelector('#app canvas') ||
-         document.querySelector('canvas') || document.body;
+  return (
+    document.querySelector("#app canvas") ||
+    document.querySelector("canvas") ||
+    document.body
+  );
 }
 
 function startGame() {
@@ -131,10 +162,10 @@ function startGame() {
 /** Shared start flow: dismiss the start screen and take pointer lock. */
 function beginGame() {
   G.started = true;
-  els.start.classList.add('hidden');
+  els.start.classList.add("hidden");
   graceUntil = performance.now() + 1500;
   Input.lockPointer(getCanvas());
-  bus.emit('ui', { action: 'start' });
+  bus.emit("ui", { action: "start" });
 }
 
 /** Continue button: restore the save first, then proceed exactly like a fresh start. */
@@ -142,9 +173,9 @@ function continueGame(e) {
   e.stopPropagation();
   if (G.started) return;
   try {
-    if (typeof save.loadGame === 'function') save.loadGame();
+    if (typeof save.loadGame === "function") save.loadGame();
   } catch (err) {
-    console.error('[menus] save.loadGame failed:', err);
+    console.error("[menus] save.loadGame failed:", err);
   }
   beginGame();
 }
@@ -152,11 +183,11 @@ function continueGame(e) {
 /** New Run button: confirm, wipe the save slot, reload into a fresh boot. */
 function newRun(e) {
   e.stopPropagation(); // the start screen's click-anywhere-to-begin must not fire
-  if (!confirm('Delete saved run and start fresh?')) return;
+  if (!confirm("Delete saved run and start fresh?")) return;
   try {
-    if (typeof save.clearSave === 'function') save.clearSave();
+    if (typeof save.clearSave === "function") save.clearSave();
   } catch (err) {
-    console.error('[menus] save.clearSave failed:', err);
+    console.error("[menus] save.clearSave failed:", err);
   }
   location.reload();
 }
@@ -165,7 +196,7 @@ function onLockChange(locked) {
   if (!created) return;
   if (locked) {
     graceUntil = 0;
-    if (activePanel === 'pause') hidePause();
+    if (activePanel === "pause") hidePause();
   } else if (G.started && !G.gameOver && activePanel === null) {
     showPause();
   }
@@ -173,61 +204,71 @@ function onLockChange(locked) {
 
 function showPause() {
   if (activePanel !== null || !G.started || G.gameOver) return;
-  activePanel = 'pause';
+  activePanel = "pause";
   G.paused = true;
-  els.pause.classList.remove('hidden');
-  bus.emit('ui', { action: 'pause' });
+  // Release the pointer like every other panel: when Escape REACHES the page
+  // (headless browsers, some Linux WMs / kiosk modes) the lock is still
+  // engaged - without this the cursor stays captured and the pause UI cannot
+  // be clicked at all. No-op where the browser already exited the lock.
+  Input.unlockPointer();
+  els.pause.classList.remove("hidden");
+  bus.emit("ui", { action: "pause" });
 }
 
 function hidePause() {
-  if (activePanel !== 'pause') return;
-  els.pause.classList.add('hidden');
+  if (activePanel !== "pause") return;
+  els.pause.classList.add("hidden");
   activePanel = null;
   G.paused = false;
 }
 
 function resume() {
-  if (activePanel !== 'pause') return;
+  if (activePanel !== "pause") return;
   hidePause();
   graceUntil = performance.now() + 1500;
   Input.lockPointer(getCanvas());
-  bus.emit('ui', { action: 'resume' });
+  bus.emit("ui", { action: "resume" });
 }
 
 function openPanel(name) {
   if (activePanel !== null) return;
-  activePanel = name;            // set BEFORE unlocking so onLockChange sees it
+  activePanel = name; // set BEFORE unlocking so onLockChange sees it
   G.paused = true;
-  els[name].classList.remove('hidden');
-  if (name === 'inventory') refreshInventory();
-  else if (name === 'skills') refreshSkills();
-  else if (name === 'bestiary') refreshBestiary();
+  els[name].classList.remove("hidden");
+  if (name === "inventory") refreshInventory();
+  else if (name === "skills") refreshSkills();
+  else if (name === "bestiary") refreshBestiary();
   Input.unlockPointer();
-  bus.emit('ui', { action: 'open' });
+  bus.emit("ui", { action: "open" });
 }
 
 function closePanel() {
-  if (activePanel !== 'inventory' && activePanel !== 'skills' && activePanel !== 'bestiary') return;
+  if (
+    activePanel !== "inventory" &&
+    activePanel !== "skills" &&
+    activePanel !== "bestiary"
+  )
+    return;
   const name = activePanel;
-  els[name].classList.add('hidden');
+  els[name].classList.add("hidden");
   activePanel = null;
   G.paused = false;
   graceUntil = performance.now() + 1500;
   Input.lockPointer(getCanvas());
-  bus.emit('ui', { action: 'close' });
+  bus.emit("ui", { action: "close" });
 }
 
 function onPlayerDied() {
   if (deathHandled) return;
   deathHandled = true;
   G.gameOver = true;
-  if (activePanel && activePanel !== 'death') {
-    els[activePanel].classList.add('hidden');
+  if (activePanel && activePanel !== "death") {
+    els[activePanel].classList.add("hidden");
   }
-  activePanel = 'death';
+  activePanel = "death";
   G.paused = true;
   Input.unlockPointer();
-  setTimeout(() => els.death.classList.add('show'), 650);
+  setTimeout(() => els.death.classList.add("show"), 650);
 }
 
 // ---------------------------------------------------------------- crafting
@@ -238,9 +279,9 @@ function craftArrows() {
   inv.wood -= 1;
   inv.shards -= 2;
   inv.arrows += 5;
-  bus.emit('craft', { item: 'arrows' });
-  bus.emit('notify', { text: 'Crafted 5 arrows', tone: 'good' });
-  bus.emit('ui', { action: 'click' });
+  bus.emit("craft", { item: "arrows" });
+  bus.emit("notify", { text: "Crafted 5 arrows", tone: "good" });
+  bus.emit("ui", { action: "click" });
   refreshInventory();
 }
 
@@ -250,21 +291,22 @@ function craftMedicine() {
   inv.oil -= 2;
   inv.wood -= 1;
   inv.medicine += 1;
-  bus.emit('craft', { item: 'medicine' });
-  bus.emit('notify', { text: 'Crafted medicine', tone: 'good' });
-  bus.emit('ui', { action: 'click' });
+  bus.emit("craft", { item: "medicine" });
+  bus.emit("notify", { text: "Crafted medicine", tone: "good" });
+  bus.emit("ui", { action: "click" });
   refreshInventory();
 }
 
 function craftFireArrows() {
   const inv = G.inventory;
-  if (inv.oil < 2 || inv.shards < 3 || inv.fireArrows + 5 > inv.maxFireArrows) return;
+  if (inv.oil < 2 || inv.shards < 3 || inv.fireArrows + 5 > inv.maxFireArrows)
+    return;
   inv.oil -= 2;
   inv.shards -= 3;
   inv.fireArrows += 5;
-  bus.emit('craft', { item: 'fireArrows' });
-  bus.emit('notify', { text: 'Crafted 5 fire arrows', tone: 'good' });
-  bus.emit('ui', { action: 'click' });
+  bus.emit("craft", { item: "fireArrows" });
+  bus.emit("notify", { text: "Crafted 5 fire arrows", tone: "good" });
+  bus.emit("ui", { action: "click" });
   refreshInventory();
 }
 
@@ -288,35 +330,52 @@ function craftArmor() {
   inv.hide -= cost.hide;
   inv.shards -= cost.shards;
   inv.armor = next;
-  bus.emit('craft', { item: 'armor' });
-  bus.emit('notify', { text: `Hide armor upgraded — rank ${next}`, tone: 'good' });
-  bus.emit('ui', { action: 'click' });
+  bus.emit("craft", { item: "armor" });
+  bus.emit("notify", {
+    text: `Hide armor upgraded — rank ${next}`,
+    tone: "good",
+  });
+  bus.emit("ui", { action: "click" });
   refreshInventory();
 }
 
 function refreshInventory() {
   const inv = G.inventory;
-  for (const key of ['shards', 'wood', 'oil', 'medicine', 'arrows', 'fireArrows', 'hide']) {
+  for (const key of [
+    "shards",
+    "wood",
+    "oil",
+    "medicine",
+    "arrows",
+    "fireArrows",
+    "hide",
+  ]) {
     els.resCounts[key].textContent = String(inv[key]);
   }
   els.spCount.textContent = String(inv.skillPoints);
-  els.craftArrows.disabled =
-    !(inv.wood >= 1 && inv.shards >= 2 && inv.arrows + 5 <= inv.maxArrows);
+  els.craftArrows.disabled = !(
+    inv.wood >= 1 &&
+    inv.shards >= 2 &&
+    inv.arrows + 5 <= inv.maxArrows
+  );
   els.craftMed.disabled = !(inv.oil >= 2 && inv.wood >= 1);
-  els.craftFire.disabled =
-    !(inv.oil >= 2 && inv.shards >= 3 && inv.fireArrows + 5 <= inv.maxFireArrows);
+  els.craftFire.disabled = !(
+    inv.oil >= 2 &&
+    inv.shards >= 3 &&
+    inv.fireArrows + 5 <= inv.maxFireArrows
+  );
 
   const next = inv.armor + 1;
   const cost = ARMOR_COST[next];
   if (!cost) {
-    els.armorName.textContent = 'Hide Armor — rank 2 (max)';
-    els.armorCost.textContent = '—';
-    els.craftArmor.textContent = 'MAXED';
+    els.armorName.textContent = "Hide Armor — rank 2 (max)";
+    els.armorCost.textContent = "—";
+    els.craftArmor.textContent = "MAXED";
     els.craftArmor.disabled = true;
   } else {
     els.armorName.textContent = `Hide Armor — rank ${inv.armor} → ${next}`;
     els.armorCost.textContent = `${cost.hide} hide • ${cost.shards} shards`;
-    els.craftArmor.textContent = 'UPGRADE';
+    els.craftArmor.textContent = "UPGRADE";
     els.craftArmor.disabled = !armorAffordable();
   }
 }
@@ -326,14 +385,14 @@ function refreshInventory() {
 function buySkill(def) {
   if (G.skills[def.id] > 0) return;
   if (G.inventory.skillPoints < 1) {
-    bus.emit('notify', { text: 'Not enough skill points', tone: 'bad' });
+    bus.emit("notify", { text: "Not enough skill points", tone: "bad" });
     return;
   }
   G.inventory.skillPoints -= 1;
   G.skills[def.id] = 1;
-  bus.emit('skillUp', { id: def.id });
-  bus.emit('notify', { text: `Skill acquired — ${def.name}`, tone: 'good' });
-  bus.emit('ui', { action: 'click' });
+  bus.emit("skillUp", { id: def.id });
+  bus.emit("notify", { text: `Skill acquired — ${def.name}`, tone: "good" });
+  bus.emit("ui", { action: "click" });
   refreshSkills();
 }
 
@@ -341,9 +400,9 @@ function refreshSkills() {
   for (const def of SKILLS) {
     const card = els.skillCards[def.id];
     const owned = G.skills[def.id] > 0;
-    card.classList.toggle('owned', owned);
-    card.classList.toggle('available', !owned && G.inventory.skillPoints >= 1);
-    els.skillState[def.id].textContent = owned ? 'RANK 1' : 'COST 1 PT';
+    card.classList.toggle("owned", owned);
+    card.classList.toggle("available", !owned && G.inventory.skillPoints >= 1);
+    els.skillState[def.id].textContent = owned ? "RANK 1" : "COST 1 PT";
   }
   els.spCount2.textContent = String(G.inventory.skillPoints);
 }
@@ -355,13 +414,15 @@ function refreshBestiary() {
   for (const type of SPECIES) {
     const e = G.bestiary[type] || { seen: false, killed: false };
     const card = els.bestiaryCards[type];
-    card.classList.toggle('seen', e.seen);
-    card.classList.toggle('killed', e.killed);
+    card.classList.toggle("seen", e.seen);
+    card.classList.toggle("killed", e.killed);
     if (e.killed) discovered++;
-    els.bestiaryName[type].textContent = e.seen ? speciesName(type) : '???';
+    els.bestiaryName[type].textContent = e.seen ? speciesName(type) : "???";
     els.bestiaryLore[type].textContent = e.killed
       ? speciesLore(type)
-      : e.seen ? 'Not yet defeated.' : 'Undiscovered.';
+      : e.seen
+        ? "Not yet defeated."
+        : "Undiscovered.";
   }
   els.bestiaryCount.textContent = `${discovered} / ${SPECIES.length}`;
 }
@@ -370,7 +431,7 @@ function refreshBestiary() {
 
 /** True when systems/save.js reports an existing save slot (defensive). */
 function saveAvailable() {
-  if (typeof save.hasSave !== 'function') return false;
+  if (typeof save.hasSave !== "function") return false;
   try {
     return !!save.hasSave();
   } catch (err) {
@@ -380,59 +441,80 @@ function saveAvailable() {
 
 /** Small settings gear button pinned bottom-right of a full-screen panel. */
 function appendGear(parent) {
-  const gear = document.createElement('button');
-  gear.className = 'iw-gear';
-  gear.title = 'Settings';
-  gear.setAttribute('aria-label', 'Settings');
-  gear.textContent = '\u2699\uFE0E'; // gear glyph, forced text presentation
+  const gear = document.createElement("button");
+  gear.className = "iw-gear";
+  gear.title = "Settings";
+  gear.setAttribute("aria-label", "Settings");
+  gear.textContent = "\u2699\uFE0E"; // gear glyph, forced text presentation
   parent.appendChild(gear);
   return gear;
+}
+
+/**
+ * Static-template HTML install for menu screens. Every template below
+ * interpolates build-time constants ONLY (no user/network data), but routing
+ * through DOMParser keeps raw innerHTML assignments out of the codebase:
+ * the parser adopts nodes safely and never executes scripts.
+ */
+function setPanelHtml(el, html) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  el.replaceChildren(...doc.body.childNodes);
 }
 
 function buildDom() {
   els = { skillCards: {}, skillState: {}, resCounts: {} };
 
   // START
-  const start = document.createElement('div');
-  start.className = 'iw-screen';
-  start.id = 'iw-start';
+  const start = document.createElement("div");
+  start.className = "iw-screen";
+  start.id = "iw-start";
   const canContinue = saveAvailable();
-  start.innerHTML = `
+  setPanelHtml(
+    start,
+    `
     <div class="iw-start-inner">
       <div class="iw-title">IRONWILD</div>
       <div class="iw-tagline">The machines remember.</div>
-      <div class="iw-controls">${CONTROLS.map(([k, a]) =>
-        `<div class="iw-ck">${k}</div><div class="iw-ca">${a}</div>`).join('')}
+      <div class="iw-controls">${CONTROLS.map(
+        ([k, a]) =>
+          `<div class="iw-ck">${k}</div><div class="iw-ca">${a}</div>`,
+      ).join("")}
       </div>
-      ${canContinue ? '<button class="iw-btn" id="iw-continue">CONTINUE</button>' : ''}
-      ${canContinue ? '<button class="iw-btn" id="iw-newrun">NEW RUN</button>' : ''}
+      ${canContinue ? '<button class="iw-btn" id="iw-continue">CONTINUE</button>' : ""}
+      ${canContinue ? '<button class="iw-btn" id="iw-newrun">NEW RUN</button>' : ""}
       <div class="iw-clickbegin">CLICK TO BEGIN</div>
-    </div>`;
+    </div>`,
+  );
   document.body.appendChild(start);
   els.start = start;
-  els.continueBtn = start.querySelector('#iw-continue');
-  els.newRunBtn = start.querySelector('#iw-newrun');
+  els.continueBtn = start.querySelector("#iw-continue");
+  els.newRunBtn = start.querySelector("#iw-newrun");
   els.gearStart = appendGear(start);
 
   // PAUSE
-  const pause = document.createElement('div');
-  pause.className = 'iw-screen hidden';
-  pause.innerHTML = `
+  const pause = document.createElement("div");
+  pause.className = "iw-screen hidden";
+  setPanelHtml(
+    pause,
+    `
     <div class="iw-panel">
       <div class="iw-panel-title">PAUSED</div>
       <button class="iw-btn" id="iw-resume">RESUME</button>
       <button class="iw-btn" id="iw-quit">QUIT</button>
-    </div>`;
+    </div>`,
+  );
   document.body.appendChild(pause);
   els.pause = pause;
-  els.resumeBtn = pause.querySelector('#iw-resume');
-  els.quitBtn = pause.querySelector('#iw-quit');
+  els.resumeBtn = pause.querySelector("#iw-resume");
+  els.quitBtn = pause.querySelector("#iw-quit");
   els.gearPause = appendGear(pause);
 
   // INVENTORY
-  const inv = document.createElement('div');
-  inv.className = 'iw-screen hidden';
-  inv.innerHTML = `
+  const inv = document.createElement("div");
+  inv.className = "iw-screen hidden";
+  setPanelHtml(
+    inv,
+    `
     <div class="iw-panel iw-wide">
       <div class="iw-panel-title">INVENTORY</div>
       <div class="iw-res-grid" id="iw-res-grid"></div>
@@ -460,52 +542,63 @@ function buildDom() {
       </div>
       <div class="iw-sp-line">Skill points: <span id="iw-sp-count">0</span></div>
       <div class="iw-hint">[I] or [ESC] to close</div>
-    </div>`;
+    </div>`,
+  );
   document.body.appendChild(inv);
   els.inventory = inv;
-  els.craftArrows = inv.querySelector('#iw-craft-arrows');
-  els.craftMed = inv.querySelector('#iw-craft-med');
-  els.craftFire = inv.querySelector('#iw-craft-fire');
-  els.craftArmor = inv.querySelector('#iw-craft-armor');
-  els.armorName = inv.querySelector('#iw-armor-name');
-  els.armorCost = inv.querySelector('#iw-armor-cost');
-  els.spCount = inv.querySelector('#iw-sp-count');
-  const grid = inv.querySelector('#iw-res-grid');
+  els.craftArrows = inv.querySelector("#iw-craft-arrows");
+  els.craftMed = inv.querySelector("#iw-craft-med");
+  els.craftFire = inv.querySelector("#iw-craft-fire");
+  els.craftArmor = inv.querySelector("#iw-craft-armor");
+  els.armorName = inv.querySelector("#iw-armor-name");
+  els.armorCost = inv.querySelector("#iw-armor-cost");
+  els.spCount = inv.querySelector("#iw-sp-count");
+  const grid = inv.querySelector("#iw-res-grid");
   for (const [key, label, color] of [
-    ['wood', 'WOOD', '#6b4a2f'], ['shards', 'SHARDS', '#59e3ff'],
-    ['oil', 'OIL', '#8a4b32'], ['medicine', 'MEDICINE', '#e06a5a'],
-    ['arrows', 'ARROWS', '#cfd8dc'], ['fireArrows', 'FIRE ARROWS', '#ff9642'],
-    ['hide', 'HIDE', '#b98a5e'],
+    ["wood", "WOOD", "#6b4a2f"],
+    ["shards", "SHARDS", "#59e3ff"],
+    ["oil", "OIL", "#8a4b32"],
+    ["medicine", "MEDICINE", "#e06a5a"],
+    ["arrows", "ARROWS", "#cfd8dc"],
+    ["fireArrows", "FIRE ARROWS", "#ff9642"],
+    ["hide", "HIDE", "#b98a5e"],
   ]) {
-    const cell = document.createElement('div');
-    cell.className = 'iw-res-cell';
-    cell.innerHTML =
+    const cell = document.createElement("div");
+    cell.className = "iw-res-cell";
+    setPanelHtml(
+      cell,
       `<span class="iw-sw" style="background:${color}"></span>` +
-      `<span class="iw-res-label">${label}</span>` +
-      `<span class="iw-res-val">0</span>`;
+        `<span class="iw-res-label">${label}</span>` +
+        `<span class="iw-res-val">0</span>`,
+    );
     grid.appendChild(cell);
-    els.resCounts[key] = cell.querySelector('.iw-res-val');
+    els.resCounts[key] = cell.querySelector(".iw-res-val");
   }
 
   // SKILLS
-  const sk = document.createElement('div');
-  sk.className = 'iw-screen hidden';
-  const cards = SKILLS.map((d) =>
-    `<div class="iw-skill" data-id="${d.id}">
+  const sk = document.createElement("div");
+  sk.className = "iw-screen hidden";
+  const cards = SKILLS.map(
+    (d) =>
+      `<div class="iw-skill" data-id="${d.id}">
        <div class="iw-skill-name">${d.name}</div>
        <div class="iw-skill-desc">${d.desc}</div>
        <div class="iw-skill-state" data-state="${d.id}">COST 1 PT</div>
-     </div>`).join('');
-  sk.innerHTML = `
+     </div>`,
+  ).join("");
+  setPanelHtml(
+    sk,
+    `
     <div class="iw-panel iw-wide">
       <div class="iw-panel-title">SKILLS</div>
       <div class="iw-skills-grid">${cards}</div>
       <div class="iw-sp-line">Skill points: <span id="iw-sp-count2">0</span></div>
       <div class="iw-hint">[TAB] or [ESC] to close</div>
-    </div>`;
+    </div>`,
+  );
   document.body.appendChild(sk);
   els.skills = sk;
-  els.spCount2 = sk.querySelector('#iw-sp-count2');
+  els.spCount2 = sk.querySelector("#iw-sp-count2");
   for (const def of SKILLS) {
     const card = sk.querySelector(`.iw-skill[data-id="${def.id}"]`);
     els.skillCards[def.id] = card;
@@ -516,23 +609,28 @@ function buildDom() {
   els.bestiaryCards = {};
   els.bestiaryName = {};
   els.bestiaryLore = {};
-  const best = document.createElement('div');
-  best.className = 'iw-screen hidden';
-  const bCards = SPECIES.map((type) =>
-    `<div class="iw-best" data-type="${type}">
+  const best = document.createElement("div");
+  best.className = "iw-screen hidden";
+  const bCards = SPECIES.map(
+    (type) =>
+      `<div class="iw-best" data-type="${type}">
        <div class="iw-best-name" data-name="${type}">???</div>
        <div class="iw-best-lore" data-lore="${type}">Undiscovered.</div>
-     </div>`).join('');
-  best.innerHTML = `
+     </div>`,
+  ).join("");
+  setPanelHtml(
+    best,
+    `
     <div class="iw-panel iw-wide">
       <div class="iw-panel-title">BESTIARY</div>
       <div class="iw-best-grid">${bCards}</div>
       <div class="iw-sp-line">Entries complete: <span id="iw-best-count">0 / ${SPECIES.length}</span></div>
       <div class="iw-hint">Scan or fight a machine to begin its entry — kill one to complete it. [B] or [ESC] to close</div>
-    </div>`;
+    </div>`,
+  );
   document.body.appendChild(best);
   els.bestiary = best;
-  els.bestiaryCount = best.querySelector('#iw-best-count');
+  els.bestiaryCount = best.querySelector("#iw-best-count");
   for (const type of SPECIES) {
     const card = best.querySelector(`.iw-best[data-type="${type}"]`);
     els.bestiaryCards[type] = card;
@@ -541,23 +639,26 @@ function buildDom() {
   }
 
   // DEATH
-  const death = document.createElement('div');
-  death.className = 'iw-death';
-  death.innerHTML = `
+  const death = document.createElement("div");
+  death.className = "iw-death";
+  setPanelHtml(
+    death,
+    `
     <div class="iw-death-inner">
       <div class="iw-death-title">YOU DIED</div>
       <div class="iw-death-sub">The wild reclaims all.</div>
       <button class="iw-btn" id="iw-restart">RESTART</button>
-    </div>`;
+    </div>`,
+  );
   document.body.appendChild(death);
   els.death = death;
-  els.restartBtn = death.querySelector('#iw-restart');
+  els.restartBtn = death.querySelector("#iw-restart");
 }
 
 function injectStyles() {
-  if (document.getElementById('iw-menu-style')) return;
-  const st = document.createElement('style');
-  st.id = 'iw-menu-style';
+  if (document.getElementById("iw-menu-style")) return;
+  const st = document.createElement("style");
+  st.id = "iw-menu-style";
   st.textContent = `
 .iw-screen{position:fixed;inset:0;z-index:30;display:flex;align-items:center;
   justify-content:center;background:rgba(4,7,10,.72);

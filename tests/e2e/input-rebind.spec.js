@@ -5,17 +5,18 @@
 // Headless SwiftShader note: the sim runs near 1fps with clamped dt, so a
 // jump arc (~0.75s game time) can take tens of seconds of wall clock - every
 // airborne->grounded wait gets a generous budget.
-import { expect, test } from '@playwright/test';
-import { gotoGame, startGame, tapKey } from './helpers.js';
+import { expect, test } from "@playwright/test";
+import { startGame, tapKey } from "./helpers.js";
 
 test.setTimeout(240_000);
 
 /** Poll until the player is grounded again (landing) with a long budget. */
 async function waitLanded(page) {
-  await expect.poll(() =>
-    page.evaluate(() => window.__IW.G.player.grounded),
-    { timeout: 120_000 },
-  ).toBe(true);
+  await expect
+    .poll(() => page.evaluate(() => window.__IW.G.player.grounded), {
+      timeout: 120_000,
+    })
+    .toBe(true);
   await page.waitForTimeout(200); // let the pressed-edge clear
 }
 
@@ -35,15 +36,17 @@ async function jumpedAfterTap(page, code) {
   });
 }
 
-test('rebound key performs the action; default key stops doing it', async ({ page }) => {
+test("rebound key performs the action; default key stops doing it", async ({
+  page,
+}) => {
   await startGame(page);
-  await page.evaluate(() => window.__IW.Input.setBinding('jump', 'KeyM'));
+  await page.evaluate(() => window.__IW.Input.setBinding("jump", "KeyM"));
 
-  expect(await jumpedAfterTap(page, 'KeyM')).toBe(true);
+  expect(await jumpedAfterTap(page, "KeyM")).toBe(true);
   await waitLanded(page);
 
   // The old default must no longer drive the action.
-  await tapKey(page, 'Space');
+  await tapKey(page, "Space");
   const rose = await page.evaluate(() => window.__IW.G.player.pos.y);
   await page.waitForTimeout(500);
   const yNow = await page.evaluate(() => window.__IW.G.player.pos.y);
@@ -51,16 +54,16 @@ test('rebound key performs the action; default key stops doing it', async ({ pag
 
   // Reset restores the default binding live.
   await page.evaluate(() => window.__IW.Input.resetBindings());
-  expect(await jumpedAfterTap(page, 'Space')).toBe(true);
+  expect(await jumpedAfterTap(page, "Space")).toBe(true);
 });
 
-test('bindings persist across reload', async ({ page }) => {
+test("bindings persist across reload", async ({ page }) => {
   // Seed through init script so the very first boot already merges the
   // persisted override - no double navigation needed.
   await page.addInitScript(() => {
-    localStorage.setItem('ironwild-bindings', JSON.stringify({ jump: 'KeyM' }));
+    localStorage.setItem("ironwild-bindings", JSON.stringify({ jump: "KeyM" }));
   });
   await startGame(page);
 
-  expect(await jumpedAfterTap(page, 'KeyM')).toBe(true);
+  expect(await jumpedAfterTap(page, "KeyM")).toBe(true);
 });

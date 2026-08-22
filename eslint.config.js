@@ -10,6 +10,11 @@ export default [
     files: ['*.config.js', '**/*.config.js'],
     languageOptions: { globals: { ...globals.node } },
   },
+  {
+    // Node tooling (perf capture, chunked e2e driver) runs in node.
+    files: ['scripts/**/*.{js,mjs}'],
+    languageOptions: { globals: { ...globals.node } },
+  },
   js.configs.recommended,
   {
     languageOptions: {
