@@ -25,6 +25,7 @@ import * as terrainMod from "./world/terrain.js";
 import * as environmentMod from "./world/environment.js";
 import * as weatherMod from "./world/weather.js";
 import * as propsMod from "./world/props.js";
+import * as landmarkMod from "./world/landmark.js";
 import * as playerMod from "./player/player.js";
 import * as cameraMod from "./player/camera.js";
 import * as bowMod from "./player/bow.js";
@@ -589,6 +590,15 @@ function boot() {
   }
 
   requireFn(propsMod, "createProps", "world/props.js")();
+  // Authored landmarks load async through the asset pipeline (decorative:
+  // a failed fetch never blocks or breaks the procedural world).
+  try {
+    if (typeof landmarkMod.createLandmarks === "function") {
+      landmarkMod.createLandmarks();
+    }
+  } catch (err) {
+    console.error("[main] createLandmarks failed:", err);
+  }
   requireFn(playerMod, "createPlayer", "player/player.js")();
 
   // Spawn on the shore at (0, ?, 8), looking north (-Z, yaw 0) across the lake basin.
@@ -690,6 +700,7 @@ function boot() {
     "world/weather.js",
   );
   const propsStep = requireFn(propsMod, "updateProps", "world/props.js");
+  const landmarksStep = requireFn(landmarkMod, "updateLandmarks", "world/landmark.js");
   const envStep = requireFn(
     environmentMod,
     "updateEnvironment",
@@ -785,6 +796,7 @@ function boot() {
       statusStep(dt); // burn DoT after damage FX, before AI reads panic flags
       vfxStep(dt); // v5: pooled VFX after combat FX, same scaled clock
       propsStep(dt);
+      if (landmarksStep) landmarksStep(dt);
       weatherStep(dt);
       envStep(dt);
       focusStep(dt);
@@ -845,6 +857,7 @@ function boot() {
   // but an explicit dispose keeps the module's contract honest.
   window.addEventListener("pagehide", () => {
     if (weatherMod.disposeWeather) weatherMod.disposeWeather();
+    if (landmarkMod.disposeLandmarks) landmarkMod.disposeLandmarks();
   });
 
   // Tab hidden -> force pause; menus own the resume flow.

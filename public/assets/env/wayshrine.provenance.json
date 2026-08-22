@@ -1,0 +1,9 @@
+{
+  "id": "wayshrine",
+  "generatedBy": "scripts/create-cert-asset.mjs",
+  "authoredBy": "IRONWILD project (procedural, in-repo)",
+  "license": "MIT",
+  "modified": false,
+  "purpose": "pipeline certification - NOT production art",
+  "created": "2026-08-22T19:34:21.683Z"
+}

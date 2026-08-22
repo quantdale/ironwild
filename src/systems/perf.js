@@ -68,6 +68,7 @@ let giMemGeo = null, giMemTex = null;   // renderer.info.memory when present
 let heapMB = null;                 // performance.memory?.usedJSHeapSize / MiB
 let scMachines = 0, scArrows = 0, scPickups = 0;
 let cellsVal = null;               // pass-through of __IW_PERF_CELLS() output
+let assetsVal = null;              // pass-through of __IW_PERF_ASSETS() output
 let qualityVal = 'high';
 let dynVal = null;                 // mirrors window.__IW_DYNRES_SCALE
 
@@ -80,6 +81,7 @@ const report = {
   gpu: { calls: 0, triangles: 0, geometries: 0, textures: 0, programs: 0 },
   memory: { heapMB: null, gpuGeometries: null, gpuTextures: null },
   scene: { machinesAlive: 0, arrows: 0, pickups: 0 },
+  assets: null,
   cells: null,
   quality: 'high',
   dynResScale: null,
@@ -226,6 +228,12 @@ function captureSceneSnapshot() {
   try {
     const fn = typeof window !== 'undefined' ? window.__IW_PERF_CELLS : null;
     if (typeof fn === 'function') cellsVal = fn() || null;
+  } catch (_) { /* publisher had a bad tick; show a dash instead of crashing */ }
+
+  assetsVal = null;
+  try {
+    const fn = typeof window !== 'undefined' ? window.__IW_PERF_ASSETS : null;
+    if (typeof fn === 'function') assetsVal = fn() || null;
   } catch (_) { /* publisher had a bad tick; show a dash instead of crashing */ }
 
   qualityVal = (G.settings && G.settings.quality) || 'high';
@@ -399,6 +407,7 @@ export function getReport() {
   report.scene.arrows = scArrows;
   report.scene.pickups = scPickups;
   report.cells = cellsVal;
+  report.assets = assetsVal;
   report.quality = qualityVal;
   report.dynResScale = dynVal;
   report.marks = topMarks();

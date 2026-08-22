@@ -14,8 +14,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 
-// Manifest census: 3 machines + 1 player + 1 env kit, all url:null today.
-const ENTRY_COUNT = 5;
+// Manifest census: 3 machines + 1 player + 2 env (wayshrine authored,
+// ruin_kit placeholder). Update when entries are added/removed.
+const ENTRY_COUNT = 6;
 const GRACE_MS = 30000; // mirrors GRACE_MS in systems/assets.js
 
 async function loadFresh() {
@@ -97,12 +98,22 @@ describe('boot safety with zero authored assets (gap 3E)', () => {
     vi.useRealTimers();
   });
 
-  it('initAssets fetches nothing and reports available:0 / pending:<all entries>', async () => {
-    const { assets } = await loadFresh();
+  it('initAssets fetches nothing for placeholders and reports authored/pending counts', async () => {
+    const { manifest, assets } = await loadFresh();
+    // Count expectations from the MANIFEST, not hardcoded: the pipeline must
+    // report every authored url as 'available' and every url:null placeholder
+    // as 'pending' - without touching the network for either.
+    let authored = 0;
+    const entries = Object.values(manifest.ASSET_MANIFEST).flatMap((cat) =>
+      Object.values(cat),
+    );
+    for (const e of entries) if (e && e.url) authored++;
+    const pending = entries.length - authored;
+    expect(entries.length).toBe(ENTRY_COUNT);
     // No renderer: KTX2 detectSupport must be skipped entirely (feature-detect
     // order), so this doubles as the renderer-less boot check.
     const summary = assets.initAssets({});
-    expect(summary).toEqual({ available: 0, pending: ENTRY_COUNT });
+    expect(summary).toEqual({ available: authored, pending });
     expect(warnSpy).not.toHaveBeenCalled();
     expect(errSpy).not.toHaveBeenCalled();
     expect(assets.getStats()).toEqual({ cached: 0, loading: 0, failed: 0, refs: 0 });

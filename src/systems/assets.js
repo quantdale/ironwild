@@ -195,13 +195,16 @@ function loadKeyed(key, url, entry) {
     // return a plain value, hence Promise.resolve.
     pendingLoad = Promise.resolve(testLoader(url, key, entry));
   } else {
-    // KTX2 textures decode during GLTFParser, so compressed-texture support
-    // must be wired BEFORE loadAsync runs (needs the remembered renderer).
-    const ktx2Ready = ktx2Done
-      ? Promise.resolve(null)
-      : ensureKtx2(lastRenderer);
-    const loaderPromise = entry.draco ? ensureDracoPipeline() : ensureBaseLoader();
-    pendingLoad = Promise.all([loaderPromise, ktx2Ready]).then(([loader]) => {
+    // ORDER MATTERS: build the loader FIRST, then KTX2 support - so
+    // ensureKtx2's back-patch always sees an existing loader and the parsed
+    // GLB gets a KTX2-capable GLTFLoader. (A parallel race here left the
+    // loader permanently without KTX2 wiring.)
+    const loaderReady = (entry.draco ? ensureDracoPipeline() : ensureBaseLoader())
+      .then((loader) => {
+        const ktx2Ready = ktx2Done ? null : ensureKtx2(lastRenderer);
+        return ktx2Ready ? ktx2Ready.then(() => loader) : loader;
+      });
+    pendingLoad = loaderReady.then((loader) => {
       if (!loader) throw new Error(`[assets] '${key}': loader unavailable`);
       return loader.loadAsync(url);
     });

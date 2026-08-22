@@ -13,6 +13,8 @@
     "test:watch": "vitest",
     "test:e2e": "npm run build && playwright test",
     "test:e2e:chunked": "node scripts/run-e2e-chunked.mjs",
+    "assets:validate": "node scripts/validate-assets.mjs",
+    "assets:create-cert": "node scripts/create-cert-asset.mjs",
     "verify": "npm run lint && npm test && npm run test:e2e"
   },
   "license": "MIT",
@@ -25,6 +27,7 @@
     "@playwright/test": "^1.62.1",
     "eslint": "^10.8.1",
     "globals": "^17.11.0",
+    "gltf-validator": "^2.0.0-dev.3.10",
     "vitest": "^4.1.11"
   }
 }

@@ -129,6 +129,20 @@ export const ASSET_MANIFEST = {
     },
   },
   env: {
+    // First AUTHORED asset: repository-generated pipeline certification prop.
+    // Proves source -> GLB -> AssetManager -> world -> telemetry end to end.
+    // It is explicitly PIPELINE PROOF, not production art (see provenance).
+    wayshrine: {
+      id: 'wayshrine',
+      url: ASSET_ROOT + 'env/wayshrine.glb',
+      lods: null,
+      clips: [], // decorative spin clip ships as extra ('act_spin'), not gameplay
+      sockets: ['socket_brazier'],
+      weakPoints: [{ name: 'core', tag: 'wp_core' }],
+      draco: false,
+      fallback: 'procedural',
+      preload: false,
+    },
     ruin_kit: {
       // Static kit of modular ruin pieces; no animation, no sockets.
       id: 'ruin_kit',
