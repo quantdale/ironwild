@@ -28,6 +28,7 @@ async function displayedCounts(page) {
 }
 
 test('inventory panel opens, mirrors counts, closes', async ({ page }) => {
+  test.setTimeout(240_000); // software GL: main thread saturates near 1fps
   await startGame(page);
 
   await openInventory(page);
@@ -40,6 +41,7 @@ test('inventory panel opens, mirrors counts, closes', async ({ page }) => {
 });
 
 test('craft buttons disabled when resources are scarce', async ({ page }) => {
+  test.setTimeout(240_000); // software GL: main thread saturates near 1fps
   await startGame(page);
 
   // Strip the default stock (8 wood / 2 medicine) so nothing is affordable.
@@ -60,6 +62,7 @@ test('craft buttons disabled when resources are scarce', async ({ page }) => {
 });
 
 test('enabled when affordable; real craft clicks consume and produce', async ({ page }) => {
+  test.setTimeout(240_000); // software GL: main thread saturates near 1fps
   await startGame(page);
 
   // Rich loadout: arrows craftable (1 wood+2 shards), medicine (2 oil+1 wood),
