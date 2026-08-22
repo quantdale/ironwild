@@ -12,9 +12,7 @@
 import * as THREE from "three";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
-import { GTAOPass } from "three/addons/postprocessing/GTAOPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
-import { SMAAPass } from "three/addons/postprocessing/SMAAPass.js";
 import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 
@@ -129,6 +127,13 @@ let composer = null,
   bloomPass = null,
   smaaPass = null,
   aoPass = null; // v4 post-processing (set in boot)
+// SMAA + GTAO are HIGH-TIER-ONLY full-screen passes (~96 kB rendered with
+// their shaders). They load lazily on the first tier that asks for them, so
+// low/medium users never download them and high-tier boot doesn't block on
+// their parse. Until arrival the passes are simply absent (disabled), then
+// inserted at their contract positions and enabled.
+let smaaPassPromise = null;
+let aoPassPromise = null;
 let godrayPass = null; // v6 volumetric light shaft pass (set in boot)
 let gradePass = null; // v6: grade/vignette/grain/aberration pass (set in boot; needs per-frame uTime)
 let bloomScale = 1; // current quality tier's bloom render-target scale vs. full res
@@ -323,6 +328,10 @@ function applyQuality() {
   // here - contact shadows are a real "looks expensive" signal, but only
   // worth it once the rest of the budget (shadows, bloom res, SMAA) is spent.
   if (aoPass) aoPass.enabled = preset.ao;
+  // First high-tier request pulls the pass modules lazily; until they land
+  // the passes are absent (visually: no AO/SMAA for a few frames at most).
+  if (!smaaPass && preset.smaa) ensureSmaaPass();
+  if (!aoPass && preset.ao) ensureAoPass();
   // v6: god rays are a second full-screen radial-sample pass - gated off
   // below high. When disabled its per-frame strength calc is also skipped.
   godraysEnabled = preset.godrays;
@@ -333,6 +342,57 @@ function applyQuality() {
   if (dynresMod && typeof dynresMod.onQualityChanged === "function") {
     dynresMod.onQualityChanged();
   }
+}
+
+/**
+ * Lazy high-tier passes. Each builds once (memoized), inserts at its contract
+ * position in the chain, and adopts whatever the CURRENT quality preset wants
+ * - applyQuality may have run while the chunk was still downloading.
+ */
+function ensureAoPass() {
+  if (aoPassPromise) return aoPassPromise;
+  aoPassPromise = import("three/addons/postprocessing/GTAOPass.js")
+    .then(({ GTAOPass }) => {
+      const pass = new GTAOPass(
+        G.scene,
+        G.camera,
+        window.innerWidth,
+        window.innerHeight,
+      );
+      pass.output = GTAOPass.OUTPUT.Default;
+      // Full-strength GTAO blacks out thin distant silhouettes (duskwings in
+      // flight, tree canopies at range) - a known screen-space AO weakness on
+      // small/thin geometry. Blending partway toward "no darkening" keeps a
+      // visible contact-shadow effect up close without that artifact at range.
+      pass.blendIntensity = 0.5;
+      composer.insertPass(pass, 1); // contract slot: right after RenderPass
+      aoPass = pass;
+      pass.enabled = !!QUALITY_PRESETS[G.settings.quality]?.ao;
+      return pass;
+    })
+    .catch((err) => {
+      console.error("[main] GTAO pass unavailable:", err);
+      return null;
+    });
+  return aoPassPromise;
+}
+
+function ensureSmaaPass() {
+  if (smaaPassPromise) return smaaPassPromise;
+  smaaPassPromise = import("three/addons/postprocessing/SMAAPass.js")
+    .then(({ SMAAPass }) => {
+      const pass = new SMAAPass(window.innerWidth, window.innerHeight);
+      const at = composer.passes.indexOf(gradePass);
+      composer.insertPass(pass, at >= 0 ? at : composer.passes.length);
+      smaaPass = pass;
+      pass.enabled = !!QUALITY_PRESETS[G.settings.quality]?.smaa;
+      return pass;
+    })
+    .catch((err) => {
+      console.error("[main] SMAA pass unavailable:", err);
+      return null;
+    });
+  return smaaPassPromise;
 }
 
 /**
@@ -447,21 +507,15 @@ function boot() {
   G.canvas = renderer.domElement;
 
   // v4: post-processing pipeline. Order: render -> GTAO contact shadows
-  // (high quality only) -> bloom (emissive weak points/fire/lightning/
-  // sun-glow pop without touching any material) -> SMAA (quality-gated) ->
-  // grade/vignette (cheap, always on) -> output (applies the renderer's
-  // ACES tone mapping + color space exactly once, per three.js's documented
-  // EffectComposer contract).
+  // (high quality only, lazily loaded) -> bloom (emissive weak points/fire/
+  // lightning/sun-glow pop without touching any material) -> SMAA (quality-
+  // gated, lazily loaded) -> grade/vignette (cheap, always on) -> output
+  // (applies the renderer's ACES tone mapping + color space exactly once,
+  // per three.js's documented EffectComposer contract). The high-tier-only
+  // passes register themselves via ensureAoPass/ensureSmaaPass when a preset
+  // first asks for them.
   composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
-  aoPass = new GTAOPass(scene, camera, window.innerWidth, window.innerHeight);
-  aoPass.output = GTAOPass.OUTPUT.Default;
-  // Full-strength GTAO blacks out thin distant silhouettes (duskwings in
-  // flight, tree canopies at range) - a known screen-space AO weakness on
-  // small/thin geometry. Blending partway toward "no darkening" keeps a
-  // visible contact-shadow effect up close without that artifact at range.
-  aoPass.blendIntensity = 0.5;
-  composer.addPass(aoPass);
   bloomPass = new UnrealBloomPass(
     new THREE.Vector2(window.innerWidth, window.innerHeight),
     0.55,
@@ -473,8 +527,6 @@ function boot() {
   // shafts themselves pick up bloom's glow instead of looking flat.
   godrayPass = new ShaderPass(GODRAY_SHADER);
   composer.addPass(godrayPass);
-  smaaPass = new SMAAPass(window.innerWidth, window.innerHeight);
-  composer.addPass(smaaPass);
   gradePass = new ShaderPass(GRADE_SHADER);
   composer.addPass(gradePass);
   composer.addPass(new OutputPass());

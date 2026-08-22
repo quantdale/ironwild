@@ -26,6 +26,19 @@ test("20s mixed session stays console-clean", async ({ page }) => {
   await startGame(page);
   await waitControlSettled(page);
 
+  // The invariant under test is CONSOLE cleanliness across a mixed session -
+  // not survivability. On a starved host the scripted sequence spans minutes
+  // of wall clock and roaming machines can kill the idle-ish player, which
+  // ends the session early (gameOver pauses panels - see the final assert).
+  // Clear threats through the game's own damage path so nothing can end the
+  // run while the harness drives it.
+  await page.evaluate(() => {
+    for (const m of window.__IW.G.machines) {
+      let guard = 0;
+      while (m.alive && guard++ < 99) m.hit(1e9, m.group.position.clone(), null);
+    }
+  });
+
   // --- move + look ---
   await page.keyboard.down("KeyW");
   await page.waitForTimeout(800);

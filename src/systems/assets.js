@@ -18,19 +18,23 @@
 //     entry is evicted after a grace period and its GPU resources disposed
 //     once. Clones SHARE geometry/material/textures with the cached source,
 //     so eviction is the ONLY place that disposes - never dispose a clone.
-//   - initAssets({renderer}) wires loaders; safe to skip: base GLTF loading
-//     works renderer-less, only KTX2 compressed textures need detectSupport.
+//   - initAssets({renderer}) remembers the renderer and validates the
+//     manifest; loader machinery itself is built on demand (see lazy note
+//     below) and KTX2 compressed textures need detectSupport(renderer).
 //   - No bus events, no G access, no per-frame update: pure infrastructure.
 
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
-import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
-import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
-import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { ASSET_ROOT, ASSET_MANIFEST, getEntry } from '../assets/manifest.js';
 
 // Re-exported so gameplay code needs only one import site for manifest lookups.
 export { getEntry };
+
+// Loader machinery arrives LAZILY (dynamic import inside the ensure* builders).
+// With every manifest entry still url:null, the GLTF/KTX2/Draco/Meshopt stack
+// (~220 kB rendered, ~40% of the app chunk) never enters the critical boot
+// path; the first authored-URL request pays for it once, then it is cached
+// like any other module. The pure convention helpers below stay static so
+// they remain synchronously unit-testable.
+
 
 // --- tuning -----------------------------------------------------------------
 
@@ -43,10 +47,12 @@ const LOD_RE = /_lod(\d+)$/i;  // node-name LOD suffix convention
 let lastRenderer = null;       // remembered so late load() calls upgrade KTX2 too
 
 let baseLoader = null;         // GLTFLoader without DRACO wiring
+let baseLoaderPromise = null;  // in-flight lazy build of baseLoader (memoized)
 let dracoGltfLoader = null;    // second GLTFLoader wired for draco:true entries
 let dracoLoader = null;        // shared DRACOLoader instance
 let ktx2Loader = null;
 let ktx2Done = false;          // detectSupport attempted (success OR failure)
+let skeletonUtilsPromise = null; // lazy SkeletonUtils for rigged clones
 
 const cache = new Map();       // key -> { entry, gltf }
 const inflight = new Map();    // key -> Promise<gltf>
@@ -79,17 +85,30 @@ function warnOnce(key, msg) {
   console.warn(msg);
 }
 
-/** Base GLTFLoader, built lazily and reused. Meshopt ships in-bundle (offline). */
+/**
+ * Base GLTFLoader, built lazily and reused. Meshopt ships in-bundle (offline).
+ * The memoized promise INCLUDES failure: a rejected import stays rejected for
+ * the session, matching the old constructor-failure permanence (failKey still
+ * owns per-asset failure bookkeeping).
+ */
 function ensureBaseLoader() {
-  if (baseLoader) return baseLoader;
-  try {
-    const loader = new GLTFLoader();
-    loader.setMeshoptDecoder(MeshoptDecoder); // bundled decoder: always available
-    baseLoader = loader;
-  } catch (err) {
-    warnOnce('gltf', `[assets] GLTFLoader unavailable: ${(err && err.message) || err}`);
+  if (!baseLoaderPromise) {
+    baseLoaderPromise = Promise.all([
+      import('three/addons/loaders/GLTFLoader.js'),
+      import('three/addons/libs/meshopt_decoder.module.js'),
+    ])
+      .then(([{ GLTFLoader }, { MeshoptDecoder }]) => {
+        const loader = new GLTFLoader();
+        loader.setMeshoptDecoder(MeshoptDecoder); // bundled decoder: always available
+        baseLoader = loader;
+        return baseLoader;
+      })
+      .catch((err) => {
+        warnOnce('gltf', `[assets] GLTFLoader unavailable: ${(err && err.message) || err}`);
+        return null;
+      });
   }
-  return baseLoader;
+  return baseLoaderPromise;
 }
 
 /**
@@ -98,19 +117,23 @@ function ensureBaseLoader() {
  * later as a per-asset load failure (handled by the normal failure contract).
  */
 function ensureKtx2(renderer) {
-  if (ktx2Done || !renderer) return;
+  if (ktx2Done || !renderer) return Promise.resolve(null);
   ktx2Done = true;
-  try {
-    ktx2Loader = new KTX2Loader()
-      .setTranscoderPath(ASSET_ROOT + 'vendor/basis/')
-      .detectSupport(renderer);
-    // Patch loaders that may already exist (load() before initAssets()).
-    if (baseLoader) baseLoader.setKTX2Loader(ktx2Loader);
-    if (dracoGltfLoader) dracoGltfLoader.setKTX2Loader(ktx2Loader);
-  } catch (err) {
-    warnOnce('ktx2', `[assets] KTX2 detectSupport failed, compressed textures off: ${(err && err.message) || err}`);
-    ktx2Loader = null;
-  }
+  return import('three/addons/loaders/KTX2Loader.js')
+    .then(({ KTX2Loader }) => {
+      ktx2Loader = new KTX2Loader()
+        .setTranscoderPath(ASSET_ROOT + 'vendor/basis/')
+        .detectSupport(renderer);
+      // Patch loaders that may already exist (load() before initAssets()).
+      if (baseLoader) baseLoader.setKTX2Loader(ktx2Loader);
+      if (dracoGltfLoader) dracoGltfLoader.setKTX2Loader(ktx2Loader);
+      return ktx2Loader;
+    })
+    .catch((err) => {
+      warnOnce('ktx2', `[assets] KTX2 detectSupport failed, compressed textures off: ${(err && err.message) || err}`);
+      ktx2Loader = null;
+      return null;
+    });
 }
 
 /**
@@ -118,9 +141,15 @@ function ensureKtx2(renderer) {
  * SEPARATE GLTFLoader: entries without draco:true never touch the decoder
  * path, even if their binary carries stray Draco extensions.
  */
-function ensureDracoPipeline() {
+async function ensureDracoPipeline() {
   if (dracoGltfLoader) return dracoGltfLoader;
-  const base = ensureBaseLoader();
+  const [base, { GLTFLoader }, { MeshoptDecoder }, { DRACOLoader }] =
+    await Promise.all([
+      ensureBaseLoader(),
+      import('three/addons/loaders/GLTFLoader.js'),
+      import('three/addons/libs/meshopt_decoder.module.js'),
+      import('three/addons/loaders/DRACOLoader.js'),
+    ]);
   if (!base) return null;
   try {
     if (!dracoLoader) {
@@ -166,12 +195,16 @@ function loadKeyed(key, url, entry) {
     // return a plain value, hence Promise.resolve.
     pendingLoad = Promise.resolve(testLoader(url, key, entry));
   } else {
-    const loader = entry.draco ? ensureDracoPipeline() : ensureBaseLoader();
-    if (!loader) {
-      failKey(key, entry, 'loader unavailable');
-      return Promise.reject(new Error(`[assets] '${key}': loader unavailable`));
-    }
-    pendingLoad = loader.loadAsync(url);
+    // KTX2 textures decode during GLTFParser, so compressed-texture support
+    // must be wired BEFORE loadAsync runs (needs the remembered renderer).
+    const ktx2Ready = ktx2Done
+      ? Promise.resolve(null)
+      : ensureKtx2(lastRenderer);
+    const loaderPromise = entry.draco ? ensureDracoPipeline() : ensureBaseLoader();
+    pendingLoad = Promise.all([loaderPromise, ktx2Ready]).then(([loader]) => {
+      if (!loader) throw new Error(`[assets] '${key}': loader unavailable`);
+      return loader.loadAsync(url);
+    });
   }
 
   // Unified settlement: BOTH network rejection and a malformed-payload throw
@@ -404,6 +437,10 @@ export async function instantiate(id, opts) {
   let clone;
   if (isSkinned(source)) {
     try {
+      if (!skeletonUtilsPromise) {
+        skeletonUtilsPromise = import('three/addons/utils/SkeletonUtils.js');
+      }
+      const SkeletonUtils = await skeletonUtilsPromise;
       clone = SkeletonUtils.clone(source);
     } catch (err) {
       warnOnce('clone:' + key, `[assets] skinned clone failed for '${key}', using static clone: ${(err && err.message) || err}`);
@@ -504,8 +541,10 @@ export function initAssets(options) {
   try {
     const renderer = options && options.renderer ? options.renderer : null;
     if (renderer) lastRenderer = renderer;
-    ensureBaseLoader();
-    ensureKtx2(lastRenderer);
+    // Deliberately NO eager loader construction here: with every entry still
+    // url:null the GLTF/KTX2/Draco module subtree stays cold (never imported),
+    // so the game ships ~220 kB less critical-path JS. The first authored-URL
+    // request builds whatever it needs through loadKeyed().
     validateManifest();
     let available = 0;
     let pending = 0;
