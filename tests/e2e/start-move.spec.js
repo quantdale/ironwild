@@ -43,6 +43,7 @@ function dist2(a, b) {
 test("start screen click begins the run and shows the HUD", async ({
  page,
 }) => {
+ test.setTimeout(SWGL_SPEC_MS); // starved-host ceiling; hardware exits in seconds
  await startGame(page);
  await expect(page.locator("#iw-start")).toHaveClass(/hidden/);
  // HUD root gets .show once started (opacity transition; class is the truth).
@@ -79,8 +80,22 @@ test("WASD moves: W forward, A/D strafe", async ({ page }) => {
 test("mouse movement steers the camera yaw (locked or fallback)", async ({
  page,
 }) => {
+ test.setTimeout(SWGL_SPEC_MS); // starved-host ceiling; hardware exits in seconds
  await startGame(page);
  await waitControlSettled(page);
+
+ // This spec tests LOOK, not survivability: on a starved host the settle wait
+ // can outlast several machine attack cycles and an idle player dies, which
+ // pauses the sim and makes the yaw assertion meaningless. Clear threats the
+ // same way the game's own damage path does (machine.hit -> killMachine), so
+ // nothing can kill the standing player while we sweep.
+ await page.evaluate(() => {
+  const G = window.__IW.G;
+  for (const m of G.machines) {
+   let guard = 0;
+   while (m.alive && guard++ < 99) m.hit(1e9, m.group.position.clone(), null);
+  }
+ });
 
  const yawBefore = await page.evaluate(() => window.__IW.G.cam.yaw);
 
