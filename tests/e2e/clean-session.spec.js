@@ -34,10 +34,17 @@ test('20s mixed session stays console-clean', async ({ page }) => {
     page.evaluate(() => window.__IW.G.cam.aiming),
   ).toBe(true);
   await page.mouse.down({ button: 'left' }); // draw
-  await page.waitForTimeout(400); // ~0.47 draw power (> FIRE_THRESHOLD 0.15)
+  // Wait on the GAME-state draw meter, not wall clock: under headless
+  // SwiftShader ~1fps a fixed 400ms hold can elapse between frames and the
+  // release would find zero draw power. 0.25 draw is well above the fire floor.
+  await expect.poll(() =>
+    page.evaluate(() => window.__IW.G.player.drawT),
+    { timeout: 60_000 },
+  ).toBeGreaterThanOrEqual(0.25);
   await page.mouse.up({ button: 'left' }); // loose
   await expect.poll(() =>
     page.evaluate(() => window.__IW.G.inventory.arrows),
+    { timeout: 60_000 },
   ).toBe(arrowsBefore - 1);
   await page.mouse.up({ button: 'right' });
   await expect.poll(() =>
