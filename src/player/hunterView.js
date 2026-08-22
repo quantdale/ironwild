@@ -9,6 +9,10 @@
 // Contract: every failure path keeps the procedural body - a missing or
 // broken asset can only ever cost visual fidelity, never gameplay.
 import { getEntry, instantiate, acquire, release } from '../systems/assets.js';
+// Same-chunk statics (main.js already ships them); the earlier dynamic
+// imports here only produced Vite mixed-import warnings.
+import { requestReattach as reattachBow } from './bow.js';
+import { requestReattach as reattachSpear } from './spear.js';
 import { G } from '../core/state.js';
 
 let attempted = false;
@@ -38,8 +42,8 @@ export function createHunterView() {
       if (G.player.useAuthoredBody(authoredRoot)) {
         active = true;
         // Weapons re-resolve their hand anchors on the swapped rig.
-        import('../player/bow.js').then((b) => b.requestReattach()).catch(() => {});
-        import('../player/spear.js').then((s) => s.requestReattach()).catch(() => {});
+        reattachBow();
+        reattachSpear();
       }
     })
     .catch(() => { /* load failure already warned+flagged inside assets.js */ });
