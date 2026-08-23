@@ -1,0 +1,9 @@
+[renderer] ANGLE (Intel, Intel(R) UHD Graphics (0x0000468B) Direct3D11 vs_5_0 ps_5_0, D3D11) | vendor=Google Inc. (Intel) | HARDWARE GL
+scenario                 p50/p95/p99 fps | calls tris geo tex prog | heapMB machines arrows cells dynres
+A: meadow                {"p50":16.8,"p95":229,"p99":250,"fps":28,"calls":843,"tris":931833,"geo":139,"tex":26,"prog":40,"heapMB":20.694732666015625,"machines":17,"arrows":40,"cells":"279/279","dynres":1}
+B: storm                 {"p50":16.6,"p95":197.8,"p99":250,"fps":33,"calls":843,"tris":931833,"geo":139,"tex":26,"prog":40,"heapMB":20.694732666015625,"machines":17,"arrows":40,"cells":"279/279","dynres":1}
+combat teleport: true
+C: combat proximity      {"p50":16.7,"p95":204.4,"p99":250,"fps":33,"calls":843,"tris":931833,"geo":139,"tex":26,"prog":40,"heapMB":20.694732666015625,"machines":17,"arrows":40,"cells":"279/279","dynres":1}
+D: timeScale 0.35        {"p50":16.7,"p95":204.4,"p99":250,"fps":33,"calls":843,"tris":931833,"geo":139,"tex":26,"prog":40,"heapMB":20.694732666015625,"machines":17,"arrows":40,"cells":"279/279","dynres":1}
+E: dense forest          {"p50":16.8,"p95":250,"p99":250,"fps":19,"calls":505,"tris":609629,"geo":139,"tex":26,"prog":40,"heapMB":20.694732666015625,"machines":17,"arrows":40,"cells":"218/279","dynres":1}
+done
