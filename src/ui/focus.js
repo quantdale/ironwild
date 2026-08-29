@@ -22,6 +22,7 @@ const TAG_HOLD = 8;             // seconds a tag stays after Q is released
 const TAG_FADE = 1.0;           // fade-out duration at the end of the hold
 const TAG_EDGE_OP = 0.38;       // faint outline opacity while tagged
 const TAG_LABEL_OP = 0.55;      // faint label opacity while tagged
+const TAG_REFRESH_INTERVAL = 1 / 30;
 const VANTAGE_RANGE_SQ = 50 * 50; // must be this close to scan a Vantage
 const VANTAGE_RESCAN_CD = 30;  // seconds before the same Vantage re-emits (matches ai.js SCAN_COOLDOWN)
 
@@ -215,7 +216,9 @@ function adoptTag(machine, wrap, labels) {
     tagRoot.add(l.spr);
   }
   tagRoot.add(wrap);
-  tags.push({ machine, wrap, labels, mat, t: TAG_HOLD });
+  const tag = { machine, wrap, labels, mat, t: TAG_HOLD, refreshT: TAG_REFRESH_INTERVAL };
+  tags.push(tag);
+  syncTagTransforms(tag);
 }
 
 function dropTag(machine) {
@@ -245,6 +248,27 @@ function clearTags() {
   tags.length = 0;
 }
 
+function syncTagTransforms(tag) {
+  const m = tag.machine;
+  const g = m && m.group;
+  const vis = !!g && m.alive !== false;
+  tag.wrap.visible = vis;
+  if (vis) {
+    tag.wrap.position.copy(g.position);
+    tag.wrap.quaternion.copy(g.quaternion);
+    tag.wrap.scale.copy(g.scale);
+  }
+  for (const l of tag.labels) {
+    if (!l.wp.broken && l.wp.mesh && vis) {
+      l.wp.mesh.getWorldPosition(_v);
+      l.spr.position.set(_v.x, _v.y + 0.4, _v.z);
+      l.spr.visible = true;
+    } else {
+      l.spr.visible = false;
+    }
+  }
+}
+
 /** Per-frame tag upkeep: timers, transform sync, end-of-hold fade. */
 function updateTags(dt) {
   for (let i = tags.length - 1; i >= 0; i--) {
@@ -256,22 +280,10 @@ function updateTags(dt) {
       tags.splice(i, 1);
       continue;
     }
-    const g = m.group;
-    const vis = !!g && m.alive !== false;
-    tg.wrap.visible = vis;
-    if (vis) {
-      tg.wrap.position.copy(g.position);
-      tg.wrap.quaternion.copy(g.quaternion);
-      tg.wrap.scale.copy(g.scale);
-    }
-    for (const l of tg.labels) {
-      if (!l.wp.broken && l.wp.mesh && vis) {
-        l.wp.mesh.getWorldPosition(_v);
-        l.spr.position.set(_v.x, _v.y + 0.4, _v.z);
-        l.spr.visible = true;
-      } else {
-        l.spr.visible = false;
-      }
+    tg.refreshT += dt;
+    if (tg.refreshT >= TAG_REFRESH_INTERVAL) {
+      tg.refreshT %= TAG_REFRESH_INTERVAL;
+      syncTagTransforms(tg);
     }
     // fade out over the last TAG_FADE seconds of the hold
     const f = clamp(tg.t / TAG_FADE, 0, 1);

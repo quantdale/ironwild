@@ -36,6 +36,10 @@ const ACTIVE_DIST = ACTIVE_CELLS * CELL_SIZE;
 const DEACT_DIST = DEACT_CELLS * CELL_SIZE;
 const APPROACH_DIST = APPROACH_CELLS * CELL_SIZE;
 const APPROACH_EXIT = APPROACH_DIST * 1.05; // small exit hysteresis so the ring edge can't chatter
+const ACTIVE_DIST_SQ = ACTIVE_DIST * ACTIVE_DIST;
+const DEACT_DIST_SQ = DEACT_DIST * DEACT_DIST;
+const APPROACH_DIST_SQ = APPROACH_DIST * APPROACH_DIST;
+const APPROACH_EXIT_SQ = APPROACH_EXIT * APPROACH_EXIT;
 
 // ---- module state ---------------------------------------------------------
 
@@ -141,6 +145,9 @@ export function register(cellKey, record) {
     // group.castShadow inside this radius of the anchor so distant batches
     // stop rendering into the shadow map (the dominant draw-call sink).
     shadowRadius: record && typeof record.shadowRadius === 'number' ? record.shadowRadius : null,
+    shadowRadiusSq: record && typeof record.shadowRadius === 'number'
+      ? record.shadowRadius * record.shadowRadius
+      : null,
     shadowing: null, // last castShadow state written (hysteresis bookkeeping)
     retired: false,
     shown: false,
@@ -167,10 +174,10 @@ export function updateCells(pos, _dt) {
   const pz = pos.z;
   if (!Number.isFinite(px) || !Number.isFinite(pz)) return;
 
-  const active2 = ACTIVE_DIST * ACTIVE_DIST;
-  const deact2 = DEACT_DIST * DEACT_DIST;
-  const approach2 = APPROACH_DIST * APPROACH_DIST;
-  const approachExit2 = APPROACH_EXIT * APPROACH_EXIT;
+  const active2 = ACTIVE_DIST_SQ;
+  const deact2 = DEACT_DIST_SQ;
+  const approach2 = APPROACH_DIST_SQ;
+  const approachExit2 = APPROACH_EXIT_SQ;
 
   for (const cell of cellsMap.values()) {
     // Squared distance from the anchor to the cell's XZ rectangle.
@@ -206,8 +213,8 @@ export function updateCells(pos, _dt) {
     // state they had - an invisible group renders in neither pass.
     for (const r of cell.records) {
       if (r.retired || r.shadowRadius == null || !r.group) continue;
-      const sr = r.shadowRadius;
-      const want = d2 <= sr * sr ? true : d2 <= sr * sr * 1.39 ? r.shadowing : false;
+      const sr2 = r.shadowRadiusSq;
+      const want = d2 <= sr2 ? true : d2 <= sr2 * 1.39 ? r.shadowing : false;
       if (r.shadowing !== want) {
         r.shadowing = want;
         r.group.castShadow = want;

@@ -71,6 +71,7 @@ const CARCASS_PROMPT = '[Hold E] Harvest carcass';
 
 // v2: threat + kill streak
 const THREAT_DIST = 40;
+const THREAT_DIST_SQ = THREAT_DIST * THREAT_DIST;
 const KILL_STREAK_WINDOW = 8;
 
 // v3: population ceiling - the mirefang pair + monarch need 3 slots above the
@@ -97,6 +98,7 @@ const MONARCH_TAIL_CD = 5;
 const MONARCH_BEHIND_TIME = 2;   // seconds loitering behind before the swipe
 const MONARCH_ENRAGE_MUL = 1.3;  // walk-speed multiplier per enrage step
 const BOSS_NEAR_DIST = 80;       // G.bossNear radius
+const BOSS_NEAR_DIST_SQ = BOSS_NEAR_DIST * BOSS_NEAR_DIST;
 const RESPAWN_AFTER = 90;        // dead non-alpha machines, seconds
 const RESPAWN_AFTER_ALPHA = 240; // alpha variants take longer
 
@@ -110,6 +112,7 @@ const STUCK_REANCHOR_T = 4;      // seconds of homeward pull after repeated wedg
 // v5: far-machine LOD (>90u): behavior logic at <=10Hz on accumulated dt
 const LOD_INTERVAL = 0.1;
 const LOD_DIST = 90;
+const LOD_DIST_SQ = LOD_DIST * LOD_DIST;
 
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
@@ -545,11 +548,15 @@ function applyLocalSteering(m, dt, waterMode = false) {
 // v5: per-frame sight raycasting moved to perception.js (staggered thinks,
 // budgeted terrain LOS, awareness ramp). ai.js only reads blackboards now.
 
-function distToPlayer(m) {
+function distSqToPlayer(m) {
   const p = G.player.pos;
   const dx = p.x - m.group.position.x;
   const dz = p.z - m.group.position.z;
-  return Math.sqrt(dx * dx + dz * dz);
+  return dx * dx + dz * dz;
+}
+
+function distToPlayer(m) {
+  return Math.sqrt(distSqToPlayer(m));
 }
 
 function distXZto(m, v) {
@@ -2241,9 +2248,9 @@ function findSpot(rng, placed, type) {
  * The Monarch is exempt (horizon spectacle + boss music need smooth motion)
  * and attack-state machines are naturally excluded - they break off at 70u.
  */
-function lodFar(m) {
+function lodFar(m, playerDistSq) {
   if (m.type === 'monarch') return false;
-  return distToPlayer(m) > LOD_DIST;
+  return playerDistSq > LOD_DIST_SQ;
 }
 
 /** Called by main.js every frame with already-timeScaled dt. */
@@ -2255,9 +2262,13 @@ export function updateMachines(dt) {
   for (let i = G.machines.length - 1; i >= 0; i--) {
     const m = G.machines[i];
     if (m.alive) {
+      // LOD uses the distance at the start of this machine's tick. Threat and
+      // boss checks share a second distance after movement so their behavior
+      // remains identical to the previous post-tick checks.
+      const lodDistanceSq = distSqToPlayer(m);
       if (m.staggerTimer > 0 || !m._ai) {
         m.moveSpeed = 0; // staggered: no movement, no attacks
-      } else if (lodFar(m)) {
+      } else if (lodFar(m, lodDistanceSq)) {
         // v5 LOD: logic quantum accumulates, then ticks in one batch
         const ai = m._ai;
         ai._lodAcc = (ai._lodAcc || 0) + dt;
@@ -2268,9 +2279,10 @@ export function updateMachines(dt) {
       } else {
         tickMachine(m, dt);
       }
-      if (m.aggro && distToPlayer(m) < THREAT_DIST) threatTarget = 1;
+      const playerDistSq = distSqToPlayer(m);
+      if (m.aggro && playerDistSq < THREAT_DIST_SQ) threatTarget = 1;
       // v3: boss music layer reads this while the Monarch closes in
-      if (m.type === 'monarch' && distToPlayer(m) <= BOSS_NEAR_DIST) bossNear = true;
+      if (m.type === 'monarch' && playerDistSq <= BOSS_NEAR_DIST_SQ) bossNear = true;
     }
     m.update(dt); // anim while alive, tip-over/fade/dispose while dead
     // Wave E: disposeMachine (machines.js) just dropped the record from the

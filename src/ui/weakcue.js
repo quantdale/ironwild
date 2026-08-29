@@ -72,33 +72,50 @@ export function createWeakCue() {
 }
 
 const _v = new THREE.Vector3();
+const REFRESH_INTERVAL = 1 / 30;
+let refreshT = REFRESH_INTERVAL;
+let visibleCount = 0;
 
-export function updateWeakCue() {
+export function updateWeakCue(dt = 1 / 60) {
   if (!G.settings.colorblind) {
-    if (pool.length && pool[0].visible) for (const s of pool) s.visible = false;
+    for (let i = 0; i < visibleCount; i++) pool[i].visible = false;
+    visibleCount = 0;
+    refreshT = REFRESH_INTERVAL;
     return;
   }
   ensurePool();
   if (!pool.length) return;
 
+  refreshT += Number.isFinite(dt) && dt > 0 ? dt : 1 / 60;
+  const refresh = refreshT >= REFRESH_INTERVAL;
+  if (refresh) refreshT %= REFRESH_INTERVAL;
+
+  // World transforms and visibility only need a 30Hz refresh. The pulse still
+  // updates every frame, keeping the cue smooth without repeated matrix walks.
   const pp = G.player && G.player.pos;
   const scale = BASE_SCALE + Math.sin(G.elapsed * PULSE_SPEED) * PULSE_AMP;
   let mi = 0;
-  for (const m of G.machines) {
-    if (mi >= pool.length) break;
-    if (!m || !m.alive || !m.group) continue;
-    if (pp && m.group.position.distanceToSquared(pp) > RANGE_SQ) continue;
-    const wps = m.weakPoints;
-    if (!wps) continue;
-    for (let i = 0; i < wps.length && mi < pool.length; i++) {
-      const wp = wps[i];
-      if (wp.broken || !wp.mesh) continue;
-      wp.mesh.getWorldPosition(_v);
-      const s = pool[mi++];
-      s.position.set(_v.x, _v.y + 0.32, _v.z);
-      s.scale.set(scale, scale, 1);
-      s.visible = true;
+  if (refresh) {
+    const previousVisibleCount = visibleCount;
+    for (const m of G.machines) {
+      if (mi >= pool.length) break;
+      if (!m || !m.alive || !m.group) continue;
+      if (pp && m.group.position.distanceToSquared(pp) > RANGE_SQ) continue;
+      const wps = m.weakPoints;
+      if (!wps) continue;
+      for (let i = 0; i < wps.length && mi < pool.length; i++) {
+        const wp = wps[i];
+        if (wp.broken || !wp.mesh) continue;
+        wp.mesh.getWorldPosition(_v);
+        const s = pool[mi++];
+        s.position.set(_v.x, _v.y + 0.32, _v.z);
+        s.visible = true;
+      }
     }
+    for (let i = mi; i < previousVisibleCount; i++) pool[i].visible = false;
+    visibleCount = mi;
   }
-  for (; mi < pool.length; mi++) pool[mi].visible = false;
+  for (let i = 0; i < visibleCount; i++) {
+    pool[i].scale.set(scale, scale, 1);
+  }
 }

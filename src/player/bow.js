@@ -317,7 +317,7 @@ function findAssistTarget(origin, dir) {
   const cosMin = Math.cos((TUNING.assistHalfAngleDeg * Math.PI) / 180);
   let best = null;
   let bestCos = cosMin;
-  let bestDist = Infinity;
+  let bestDistSq = Infinity;
   for (let mi = 0; mi < G.machines.length; mi++) {
     const m = G.machines[mi];
     if (!m.alive || !m.weakPoints) continue;
@@ -326,13 +326,18 @@ function findAssistTarget(origin, dir) {
       if (wp.broken || !wp.mesh) continue; // same skip rules as projectile hits
       wp.mesh.getWorldPosition(_assistC);
       _assistD.subVectors(_assistC, origin);
-      const dist = _assistD.length();
-      if (dist < 1e-4) continue;
-      const c = _assistD.multiplyScalar(1 / dist).dot(dir);
-      if (c > bestCos || (c === bestCos && dist < bestDist)) {
-        bestCos = c;
-        bestDist = dist;
-        best = { machine: m, wp, cos: c, dist };
+      const distSq = _assistD.lengthSq();
+      if (distSq < 1e-8) continue;
+      const dot = _assistD.dot(dir);
+      if (dot <= 0) continue; // assist cone is forward-facing
+      const bestCosSq = bestCos * bestCos;
+      const score = dot * dot;
+      if (score > bestCosSq * distSq ||
+          (score === bestCosSq * distSq && distSq < bestDistSq)) {
+        const dist = Math.sqrt(distSq);
+        bestCos = dot / dist;
+        bestDistSq = distSq;
+        best = { machine: m, wp, cos: bestCos, dist };
       }
     }
   }

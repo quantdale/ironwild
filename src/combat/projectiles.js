@@ -246,6 +246,10 @@ function resolveHit(a, machine, wp, center, radius) {
   _hitPoint.add(center);
   const pt = _hitPoint.clone(); // single heap alloc per hit, shared by hit()+FX
   const landed = machine.hit(dmg, pt, wp || null) !== false;
+  // A hit may break/detach a weak point or otherwise change the machine
+  // transform. Refresh the cached centers before another arrow can test it in
+  // this same frame, preserving the old per-substep transform visibility.
+  if (machine._projectileCache) refreshColliderCache(machine);
   const spd = clamp(a.vel.length() / CONFIG.arrowMaxPowerSpeed, 0, 1); // 0..1 impact speed
   const dir = _dirN.copy(a.vel).normalize().clone(); // travel line at contact
   if (!landed) {
@@ -317,19 +321,50 @@ function emitSurfaceImpact(a, groundY) {
   });
 }
 
+/**
+ * Refresh world-space collider centers once per projectile frame. Arrows can
+ * perform several swept substeps, so doing this in collideMachines() repeated
+ * the same matrix work for every arrow and substep. Collider topology is
+ * stable during a run; vectors are grown lazily and reused across frames.
+ */
+function refreshColliderCache(m) {
+  const wps = m.weakPoints || [];
+  const bods = m.bodySpheres || [];
+  let cache = m._projectileCache;
+  if (!cache) {
+    cache = { weak: [], body: [] };
+    m._projectileCache = cache;
+  }
+  while (cache.weak.length < wps.length) cache.weak.push(new THREE.Vector3());
+  while (cache.body.length < bods.length) cache.body.push(new THREE.Vector3());
+
+  for (let i = 0; i < wps.length; i++) {
+    const wp = wps[i];
+    if (wp && wp.mesh) wp.mesh.getWorldPosition(cache.weak[i]);
+  }
+  if (bods.length) {
+    m.group.updateWorldMatrix(true, false);
+    for (let i = 0; i < bods.length; i++) {
+      cache.body[i].copy(bods[i].localPos);
+      m.group.localToWorld(cache.body[i]);
+    }
+  }
+}
+
 /** Sweep one flight substep against every alive machine: weak points, then body. */
 function collideMachines(a, p0, p1) {
   for (let mi = 0; mi < G.machines.length; mi++) {
     const m = G.machines[mi];
     if (!m.alive) continue;
+    const cache = m._projectileCache;
     const wps = m.weakPoints;
     if (wps) {
       for (let wi = 0; wi < wps.length; wi++) {
         const wp = wps[wi];
         if (wp.broken || !wp.mesh) continue; // broken part -> falls through to body
-        wp.mesh.getWorldPosition(_v1);
-        if (segmentHitsSphere(p0, p1, _v1, wp.radius)) {
-          resolveHit(a, m, wp, _v1, wp.radius);
+        const center = cache.weak[wi];
+        if (segmentHitsSphere(p0, p1, center, wp.radius)) {
+          resolveHit(a, m, wp, center, wp.radius);
           return true;
         }
       }
@@ -338,10 +373,9 @@ function collideMachines(a, p0, p1) {
     if (bods) {
       for (let bi = 0; bi < bods.length; bi++) {
         const bs = bods[bi];
-        _v1.copy(bs.localPos);
-        m.group.localToWorld(_v1);
-        if (segmentHitsSphere(p0, p1, _v1, bs.radius)) {
-          resolveHit(a, m, null, _v1, bs.radius);
+        const center = cache.body[bi];
+        if (segmentHitsSphere(p0, p1, center, bs.radius)) {
+          resolveHit(a, m, null, center, bs.radius);
           return true;
         }
       }
@@ -442,6 +476,26 @@ export function spawnArrow({ origin, dir, speed, damage, fire = false, power = 1
 export function updateProjectiles(dt) {
   ensurePool();
   if (!pool || !(dt > 0)) return;
+
+  let hasFlyingArrow = false;
+  for (let i = 0; i < pool.length; i++) {
+    const a = pool[i];
+    if (a.alive && a.stuckT < 0) {
+      hasFlyingArrow = true;
+      break;
+    }
+  }
+
+  // Machine transforms were updated immediately before this system in the
+  // frame loop. Refresh each live collider once only when a flying arrow can
+  // use it; inactive/stuck-arrow frames pay no collider-cache cost.
+  if (hasFlyingArrow) {
+    for (let i = 0; i < G.machines.length; i++) {
+      const m = G.machines[i];
+      if (m && m.alive) refreshColliderCache(m);
+    }
+  }
+
   for (let i = 0; i < pool.length; i++) {
     const a = pool[i];
     if (a.alive) {

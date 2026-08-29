@@ -98,6 +98,8 @@ let nextBeatAt = -1;    // < 0 => heartbeat idle
 let droneOscA = null, droneOscB = null;               // combat tense drone
 let lastCalmT = -1, lastExpT = -1, lastComT = -1;     // crossfade glide caches
 let lastRainT = -1;                                   // rain bed glide cache
+let lastRainCutoff = -1;
+let lastWindT = -1;
 let nextPluckAt = 0, nextPulseAt = 0, pluckStep = 0;  // layer schedulers
 let lastThunderAt = -99;                              // thunder min-gap clock
 let lastHandledStrikeAt = -1;                         // < w.lastStrikeAt => boom due
@@ -1386,7 +1388,11 @@ export function updateAudio(_dt) {
     // rides setTargetAtTime so weather transitions never click or jump.
     // Rain brightness opens up with intensity (his -> downpour sheet).
     if (rainLPF) {
-      rainLPF.frequency.setTargetAtTime(lerp(4500, 7500, clamp(w.intensity, 0, 1)), t, 0.8);
+      const rainCutoff = lerp(4500, 7500, clamp(w.intensity, 0, 1));
+      if (Math.abs(rainCutoff - lastRainCutoff) > 12) {
+        lastRainCutoff = rainCutoff;
+        rainLPF.frequency.setTargetAtTime(rainCutoff, t, 0.8);
+      }
     }
     // Storm sub-rumble bed fades with storm intensity, out when not stormy.
     if (stormGain) {
@@ -1397,7 +1403,10 @@ export function updateAudio(_dt) {
     // to this param at init only adds a small idle wobble on top).
     if (windGain) {
       const windT = 0.03 + clamp(w.wind, 0, 1) * 0.05 + (w.gust || 0) * 0.02;
-      glideGain(windGain, windT, 0.6);
+      if (Math.abs(windT - lastWindT) > 0.001) {
+        lastWindT = windT;
+        glideGain(windGain, windT, 0.6);
+      }
     }
     // weather.js logs each bolt (lastStrikeAt/lastStrikeDist); boom once per
     // entry, delayed/volume'd by distance, with a min-gap for clustered bolts

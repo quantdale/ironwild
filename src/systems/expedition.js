@@ -58,8 +58,20 @@ const TYPE_LABELS = {
 let inited = false;
 let worldRoot = null;
 let uiEl = null;
+let uiTitle = null;
+let uiDetail = null;
+let uiTime = null;
+let uiFill = null;
+let uiHoldTrack = null;
+let uiHoldFill = null;
 let beacon = null;
 let cache = null;
+let expeditionCore = null;
+let expeditionRing = null;
+let visualEventId = null;
+let visualEventType = null;
+let worldShown = false;
+let uiShown = false;
 let coreMat = null;
 let ringMat = null;
 let siteLight = null;
@@ -257,49 +269,66 @@ function buildWorldVisuals() {
   beacon.add(base, mast, core, ring, flag, siteLight);
   worldRoot.add(beacon, cache);
   G.scene.add(worldRoot);
+  expeditionCore = core;
+  expeditionRing = ring;
 }
 
 function updateWorldVisual(event) {
   if (!worldRoot || !event) {
-    if (worldRoot) worldRoot.visible = false;
+    if (worldRoot && worldShown) {
+      worldRoot.visible = false;
+      worldShown = false;
+    }
+    visualEventId = null;
+    visualEventType = null;
     return;
   }
-  worldRoot.visible = true;
-  worldRoot.position.set(event.x, heightAt(event.x, event.z) + 0.02, event.z);
+  if (!worldShown) {
+    worldRoot.visible = true;
+    worldShown = true;
+  }
+  if (visualEventId !== event.id || visualEventType !== event.type) {
+    visualEventId = event.id;
+    visualEventType = event.type;
+    worldRoot.position.set(event.x, heightAt(event.x, event.z) + 0.02, event.z);
+
+    const salvage = event.type === 'salvage';
+    beacon.visible = !salvage;
+    cache.visible = salvage;
+    if (salvage) {
+      coreMat.color.setHex(0xffc857);
+      coreMat.emissive.setHex(0x6b4314);
+      ringMat.color.setHex(0xffc857);
+      if (siteLight) siteLight.color.setHex(0xffc857);
+    } else {
+      const signal = event.type === 'signal';
+      coreMat.color.setHex(signal ? 0xff6b5f : 0x59e3ff);
+      coreMat.emissive.setHex(signal ? 0x6b1d18 : 0x12485a);
+      ringMat.color.setHex(signal ? 0xff6b5f : 0x59e3ff);
+      if (siteLight) siteLight.color.setHex(signal ? 0xff6b5f : 0x59e3ff);
+    }
+  }
   const pulse = 1 + Math.sin(G.elapsed * 4.5) * 0.12;
-  const core = beacon.getObjectByName('expedition_core');
-  const ring = beacon.getObjectByName('expedition_ring');
-  if (core) core.scale.setScalar(pulse);
-  if (ring) {
-    ring.scale.setScalar(1 + Math.sin(G.elapsed * 2.4) * 0.08);
-    ring.rotation.z = G.elapsed * 0.65;
-  }
+  expeditionCore.scale.setScalar(pulse);
+  expeditionRing.scale.setScalar(1 + Math.sin(G.elapsed * 2.4) * 0.08);
+  expeditionRing.rotation.z = G.elapsed * 0.65;
   if (siteLight) siteLight.intensity = 1.2 + Math.sin(G.elapsed * 4.5) * 0.35;
-  const salvage = event.type === 'salvage';
-  beacon.visible = !salvage;
-  cache.visible = salvage;
-  if (salvage) {
-    cache.rotation.y = G.elapsed * 0.25;
-    coreMat.color.setHex(0xffc857);
-    coreMat.emissive.setHex(0x6b4314);
-    ringMat.color.setHex(0xffc857);
-    if (siteLight) siteLight.color.setHex(0xffc857);
-  } else {
-    const signal = event.type === 'signal';
-    coreMat.color.setHex(signal ? 0xff6b5f : 0x59e3ff);
-    coreMat.emissive.setHex(signal ? 0x6b1d18 : 0x12485a);
-    ringMat.color.setHex(signal ? 0xff6b5f : 0x59e3ff);
-    if (siteLight) siteLight.color.setHex(signal ? 0xff6b5f : 0x59e3ff);
-  }
+  if (event.type === 'salvage') cache.rotation.y = G.elapsed * 0.25;
 }
 
 function updateUi(event, near) {
   if (!uiEl) return;
   if (!event) {
-    uiEl.classList.remove('show');
+    if (uiShown) {
+      uiEl.classList.remove('show');
+      uiShown = false;
+    }
     return;
   }
-  uiEl.classList.add('show');
+  if (!uiShown) {
+    uiEl.classList.add('show');
+    uiShown = true;
+  }
   const title = `${TYPE_LABELS[event.type]} · ${event.label}`;
   const distance = Math.ceil(Math.sqrt(eventDistance(event, G.player.pos)));
   const interaction = INTERACTIONS[event.type];
@@ -316,25 +345,24 @@ function updateUi(event, near) {
   const holdProgress = `${holdPct}%`;
   if (title !== titleCache) {
     titleCache = title;
-    uiEl.querySelector('.iw-exp-title').textContent = title;
+    uiTitle.textContent = title;
   }
   if (detail !== detailCache) {
     detailCache = detail;
-    uiEl.querySelector('.iw-exp-detail').textContent = detail;
+    uiDetail.textContent = detail;
   }
   if (timer !== timerCache) {
     timerCache = timer;
-    uiEl.querySelector('.iw-exp-time').textContent = timer;
+    uiTime.textContent = timer;
   }
   if (progress !== progressCache) {
     progressCache = progress;
-    uiEl.querySelector('.iw-exp-fill').style.width = progress;
+    uiFill.style.width = progress;
   }
   if (holdProgress !== holdProgressCache) {
     holdProgressCache = holdProgress;
-    const holdTrack = uiEl.querySelector('.iw-exp-hold-track');
-    holdTrack.style.display = interaction.hold > 0 ? 'block' : 'none';
-    uiEl.querySelector('.iw-exp-hold-fill').style.width = holdProgress;
+    uiHoldTrack.style.display = interaction.hold > 0 ? 'block' : 'none';
+    uiHoldFill.style.width = holdProgress;
   }
 }
 
@@ -368,6 +396,12 @@ function buildUi() {
   uiEl.id = 'iw-expedition';
   uiEl.innerHTML = '<div class="iw-exp-kicker">FRONTIER EXPEDITION</div><div class="iw-exp-title"></div><div class="iw-exp-row"><span class="iw-exp-detail"></span><span class="iw-exp-time"></span></div><div class="iw-exp-track"><div class="iw-exp-fill"></div></div><div class="iw-exp-hold-track"><div class="iw-exp-hold-fill"></div></div>';
   document.body.appendChild(uiEl);
+  uiTitle = uiEl.querySelector('.iw-exp-title');
+  uiDetail = uiEl.querySelector('.iw-exp-detail');
+  uiTime = uiEl.querySelector('.iw-exp-time');
+  uiFill = uiEl.querySelector('.iw-exp-fill');
+  uiHoldTrack = uiEl.querySelector('.iw-exp-hold-track');
+  uiHoldFill = uiEl.querySelector('.iw-exp-hold-fill');
 }
 
 /** Idempotent boot. Safe before the scene exists or in plain unit environments. */
@@ -387,8 +421,8 @@ export function updateExpedition(dt) {
   let state = G.expedition;
   if (!state) return;
   if (!G.started || G.gameOver || !G.player || !G.player.pos) {
-    if (uiEl) uiEl.classList.remove('show');
-    if (worldRoot) worldRoot.visible = false;
+    updateWorldVisual(null);
+    updateUi(null, false);
     return;
   }
   if (!state.active) {
@@ -446,7 +480,19 @@ export function disposeExpedition() {
   if (uiEl) uiEl.remove();
   worldRoot = null;
   uiEl = null;
+  uiTitle = null;
+  uiDetail = null;
+  uiTime = null;
+  uiFill = null;
+  uiHoldTrack = null;
+  uiHoldFill = null;
   beacon = null;
+  expeditionCore = null;
+  expeditionRing = null;
+  visualEventId = null;
+  visualEventType = null;
+  worldShown = false;
+  uiShown = false;
   cache = null;
   coreMat = null;
   ringMat = null;
