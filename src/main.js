@@ -38,6 +38,7 @@ import * as aiMod from "./machines/ai.js";
 import * as saveMod from "./systems/save.js";
 import * as questsMod from "./systems/quests.js";
 import * as xpMod from "./systems/xp.js";
+import * as expeditionMod from "./systems/expedition.js";
 import * as bestiaryMod from "./systems/bestiary.js";
 import * as hudMod from "./ui/hud.js";
 import * as menusMod from "./ui/menus.js";
@@ -560,8 +561,8 @@ function boot() {
   applyQuality();
 
   // v5 (wave B): asset pipeline loaders (GLTF/KTX2/meshopt; Draco on demand).
-  // No authored GLBs exist yet - manifest entries are placeholders - so this
-  // only constructs loaders and validates the manifest. Publishing the
+  // Authored GLB content is optional and loads through the asset pipeline;
+  // procedural machines and world props remain the immediate fallback.
   // instantiate bridge in the GLTF-style shape anim/machineAnim.js expects
   // ({scene, animations}) lets authored machines upgrade themselves later
   // without touching this file again.
@@ -644,6 +645,7 @@ function boot() {
   // a snapshot always serializes fully-initialized quest slots.
   requireFn(questsMod, "createQuests", "systems/quests.js")();
   requireFn(xpMod, "createXp", "systems/xp.js")();
+  requireFn(expeditionMod, "createExpedition", "systems/expedition.js")();
   requireFn(bestiaryMod, "createBestiary", "systems/bestiary.js")();
   requireFn(saveMod, "initSave", "systems/save.js")();
 
@@ -725,6 +727,7 @@ function boot() {
   const tipsStep = requireFn(tipsMod, "updateTips", "ui/tips.js");
   const questsStep = requireFn(questsMod, "updateQuests", "systems/quests.js");
   const xpStep = requireFn(xpMod, "updateXp", "systems/xp.js");
+  const expeditionStep = requireFn(expeditionMod, "updateExpedition", "systems/expedition.js");
   // save.js exports updateSave plus the documented `tick` alias - accept either.
   const saveStep =
     typeof saveMod.tick === "function"
@@ -813,17 +816,18 @@ function boot() {
       focusStep(dt);
       weakCueStep(dt);
       hudStep(rawDt);
-      menusStep();
+      menusStep(dt);
       minimapStep(dt);
       tipsStep(dt);
       questsStep(dt);
       xpStep(dt);
+      expeditionStep(dt);
     } else {
       // Start screen / paused / dead: keep the world breathing, skip gameplay.
       if (cameraStep) cameraStep(rawDt);
       envStep(rawDt * 0.2);
       hudStep(rawDt);
-      menusStep();
+      menusStep(rawDt);
     }
     perfMod.endMark("sim");
 
@@ -869,6 +873,7 @@ function boot() {
   window.addEventListener("pagehide", () => {
     if (weatherMod.disposeWeather) weatherMod.disposeWeather();
     if (landmarkMod.disposeLandmarks) landmarkMod.disposeLandmarks();
+    if (expeditionMod.disposeExpedition) expeditionMod.disposeExpedition();
     if (hunterViewMod.disposeHunterView) hunterViewMod.disposeHunterView();
   });
 

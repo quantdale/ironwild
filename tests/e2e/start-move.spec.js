@@ -55,6 +55,16 @@ test("WASD moves: W forward, A/D strafe", async ({ page }) => {
  await startGame(page);
  await waitControlSettled(page);
 
+ // Pointer-lock acquisition can leave a synthetic mouse delta queued on slow
+ // Chromium hosts. Establish the invariant this test documents before taking
+ // the position snapshot: yaw 0, no pending look input.
+ await page.evaluate(() => {
+  window.__IW.G.cam.yaw = 0;
+  window.__IW.G.cam.pitch = 0;
+  window.__IW.G.player.yaw = 0;
+  window.__IW.Input.consumeMouse();
+ });
+
  // Fresh boot: yaw is 0 (facing -Z), so A/D map to -X/+X world strafe.
  // Each leg waits on the ACTUAL displacement (see holdUntilMoved) and the
  // assertions then verify DIRECTION, which is the invariant under test.
@@ -100,10 +110,14 @@ test("mouse movement steers the camera yaw (locked or fallback)", async ({
  const yawBefore = await page.evaluate(() => window.__IW.G.cam.yaw);
 
  // Center first, then sweep. Under pointer lock these arrive as movementX/Y;
- // in lockBroken fallback the same events feed the free-cursor path.
- await page.mouse.move(640, 360);
- await page.mouse.move(940, 360, { steps: 8 });
- await page.mouse.move(340, 420, { steps: 8 });
+ // in lockBroken fallback the same events feed the free-cursor path. Dispatch
+ // the movement events through the real DOM listener so SwiftShader's
+ // absolute-coordinate mouse synthesis cannot emit cancelling pairs.
+ await page.evaluate(() => {
+  for (const [movementX, movementY] of [[180, 0], [-60, 20]]) {
+   window.dispatchEvent(new MouseEvent("mousemove", { movementX, movementY }));
+  }
+ });
 
  await expect
   .poll(

@@ -113,4 +113,5 @@ export const G = {
   weather: { type: 'clear', intensity: 0, wind: 0.3 }, // written by world/weather.js
   mapRevealed: false,    // true after scanning a Vantage (minimap fog lifts)
   quests: { slots: [null, null, null], completed: 0 }, // owned by systems/quests.js
+  expedition: { active: null, completed: 0, nextId: 1, cooldown: 8 }, // systems/expedition.js
 };

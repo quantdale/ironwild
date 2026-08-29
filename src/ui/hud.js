@@ -92,6 +92,7 @@ let lvCache = '';                 // applied 'LV n' badge text
 // v5 animation state
 let bowPhase = 'idle';            // mirror of player/bow.js's FSM, fed by 'bowState'
 let uiScaleCache = null;          // last scale applied to SCALED_WIDGETS (null = never)
+const promptClaims = new Map();   // source -> { text, priority }
 
 const _v = new THREE.Vector3();     // scratch, reused
 const _hdPos = new THREE.Vector3(); // world pos of the last damage source
@@ -326,12 +327,26 @@ function spawnToast(n) {
 
 function onPrompt(p) {
   if (!els.prompt) return;
-  if (p && p.text) {
-    els.prompt.textContent = String(p.text);
-    els.prompt.style.display = 'block';
-  } else {
-    els.prompt.style.display = 'none';
+  const source = p && typeof p.source === 'string' ? p.source : 'legacy';
+  const priority = p && Number.isFinite(p.priority) ? p.priority : 0;
+  if (!p || !p.text) promptClaims.delete(source);
+  else promptClaims.set(source, { text: String(p.text), priority });
+
+  // Resolve the highest-priority live claim, using insertion order as the
+  // deterministic tie-breaker. Releasing one producer therefore restores a
+  // still-valid pickup/carcass prompt instead of blanking the HUD.
+  let winner = null;
+  for (const [claimSource, claim] of promptClaims) {
+    if (!winner || claim.priority > winner.claim.priority) {
+      winner = { source: claimSource, claim };
+    }
   }
+  if (!winner) {
+    els.prompt.style.display = 'none';
+    return;
+  }
+  els.prompt.textContent = winner.claim.text;
+  els.prompt.style.display = 'block';
 }
 
 function onHitMarker(h) {

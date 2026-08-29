@@ -1506,6 +1506,9 @@ bus.on('playerHealed', () => sfx('playerHeal'));
 bus.on('pickup', (p) => sfx('pickup', { type: p ? p.type : null }));
 bus.on('craft', () => sfx('craft'));
 bus.on('skillUp', () => sfx('skillUp'));
+bus.on('expeditionStarted', () => sfx('uiOpen'));
+bus.on('expeditionCompleted', () => sfx('victorySting'));
+bus.on('expeditionExpired', () => sfx('uiClose'));
 
 // Wave I contract events -----------------------------------------------------
 

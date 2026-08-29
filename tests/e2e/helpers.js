@@ -8,7 +8,7 @@
 //   same frame would be missed. tapKey() holds each key >=100ms (~6 frames).
 // - State polling: never sleep-and-hope; poll window.__IW.* via expect.poll.
 
-import { expect } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 /**
  * Wall-clock budgets for software-GL / starved-host runs.
@@ -73,19 +73,25 @@ export function watchConsole(page) {
 
 /** Navigate to the game and wait until boot has fully run (debug handle live). */
 export async function gotoGame(page) {
- await page.goto("/");
+ test.setTimeout(SWGL_SPEC_MS);
+ await page.goto("/", { timeout: SWGL_POLL_MS });
  await page.waitForFunction(
   () => !!(window.__IW && window.__IW.G && window.__IW.G.player),
   null,
-  { timeout: 20_000 },
+  { timeout: SWGL_POLL_MS },
  );
 }
 
 /** Dismiss the title screen and wait for G.started. */
 export async function startGame(page) {
+ test.setTimeout(SWGL_SPEC_MS);
  await gotoGame(page);
- await page.locator("#iw-start").click();
- await expect.poll(() => page.evaluate(() => window.__IW.G.started)).toBe(true);
+ await page.locator("#iw-start").click({ timeout: SWGL_POLL_MS });
+ await expect
+  .poll(() => page.evaluate(() => window.__IW.G.started), {
+   timeout: SWGL_POLL_MS,
+  })
+  .toBe(true);
 }
 
 /**

@@ -100,6 +100,7 @@ describe("default bindings", () => {
     expect(b.quicksave).toContain("KeyP");
     expect(b.melee).toContain("KeyF");
     expect(b.arrowToggle).toContain("KeyX");
+    expect(b.map).toContain("KeyM");
     expect(b.aim).toContain("Mouse2"); // RMB pseudo-code
     expect(b.fire).toContain("Mouse0"); // LMB pseudo-code
   });
@@ -317,17 +318,19 @@ describe("setBinding / resetBinding / persistence", () => {
     expect(globalThis.localStorage.getItem(BINDINGS_KEY)).toBeNull();
   });
 
-  it("duplicate codes across two actions both trigger (no conflict policy - documented behaviour)", async () => {
-    // Actual policy: overrides are per-action with no conflict detection, so
-    // sharing a code makes both actions fire. Recorded here deliberately so a
-    // future conflict policy change shows up as an intentional contract edit.
+  it("reports duplicate bindings without suppressing either action", async () => {
     const { Input } = await fresh();
     Input.setBinding("jump", "KeyM");
     Input.setBinding("sprint", "KeyM");
+    expect(Input.isActionShared("jump")).toBe(true);
+    expect(Input.isActionShared("map")).toBe(true);
+
     keyDown("KeyM");
     Input.beginFrame();
     expect(Input.isAction("jump")).toBe(true);
     expect(Input.isAction("sprint")).toBe(true);
+    expect(Input.wasActionPressed("jump")).toBe(true);
+    expect(Input.wasActionPressed("sprint")).toBe(true);
     Input.endFrame();
   });
 

@@ -1,11 +1,9 @@
 // IRONWILD - production asset manifest (Wave B).
-// Data-only registry of authored GLB assets. Final binaries do not exist yet;
-// every entry declares its CANONICAL drop-in location so a finished GLB just
-// needs to be copied to `ASSET_ROOT + <category>/<id>.glb` - no loader code
-// changes. Until then systems/assets.js routes every miss to the procedural
-// fallback (entry.fallback === 'procedural'); nothing here is fetched at boot
-// because every entry is a url:null placeholder with preload:false - load()
-// rejects fast without touching any loader until a real url is authored.
+// Data-only registry of authored GLB assets and procedural fallback entries.
+// Every authored entry declares its canonical drop-in location; authored
+// content is optional at runtime because systems/assets.js preserves the
+// procedural fallback when a file or decoder is unavailable. Entries are
+// preload:false so the critical boot path does not fetch art synchronously.
 //
 // Authoring rules (mirrored in ASSET_CONVENTIONS, enforced loosely by
 // systems/assets.js at runtime):

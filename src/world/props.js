@@ -1105,7 +1105,7 @@ export function updateProps(dt) {
   const want = best ? PROMPT_TEXT[best.type] : null;
   if (want !== activePrompt) {
     activePrompt = want;
-    bus.emit('prompt', { text: want });
+    bus.emit('prompt', { source: 'pickup', priority: 0, text: want });
   }
   if (best && Input.wasActionPressed('interact')) { // v5: action layer - rebinding/gamepad affect pickup
     const amount = G.skills.scavenger ? 2 : 1;
@@ -1115,7 +1115,7 @@ export function updateProps(dt) {
     bus.emit('pickup', { type: best.type, amount });
     bus.emit('notify', { text: `+${amount} ${best.type}`, tone: 'good' });
     activePrompt = null;
-    bus.emit('prompt', { text: null });
+    bus.emit('prompt', { source: 'pickup', priority: 0, text: null });
   }
 }
 

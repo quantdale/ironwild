@@ -10,6 +10,7 @@ import { Input } from "../core/input.js";
 import * as save from "../systems/save.js";
 import * as settings from "./settings.js";
 import { SPECIES, speciesName, speciesLore } from "../systems/bestiary.js";
+import { renderExpandedMap, updateExpandedMap } from "./minimap.js";
 
 const SKILLS = [
   { id: "heartier", name: "Heartier Frame", desc: "+30 max health" },
@@ -37,12 +38,13 @@ const CONTROLS = [
   ["I", "Inventory"],
   ["TAB", "Skills"],
   ["B", "Bestiary"],
+  ["M", "World map"],
   ["ESC", "Pause"],
 ];
 
 let created = false;
 let els = null;
-let activePanel = null; // null | 'pause' | 'inventory' | 'skills' | 'death'
+let activePanel = null; // null | 'pause' | 'inventory' | 'skills' | 'bestiary' | 'map' | 'death'
 let graceUntil = 0; // pause auto-trigger suppressed until relock settles
 let deathHandled = false;
 
@@ -96,7 +98,7 @@ export function createMenus() {
   bus.on("playerDied", onPlayerDied);
 }
 
-export function updateMenus() {
+export function updateMenus(dt = 1 / 60) {
   if (!created || !G.started || G.gameOver) return;
   // Settings modal is up: it owns the keyboard (Escape closes itself via a
   // capture-phase handler); don't toggle panels or auto-pause beneath it.
@@ -114,11 +116,16 @@ export function updateMenus() {
     if (activePanel === "bestiary") closePanel();
     else if (activePanel === null) openPanel("bestiary");
   }
+  if (Input.wasActionPressed("map") && !Input.isActionShared("map")) {
+    if (activePanel === "map") closePanel();
+    else if (activePanel === null) openPanel("map");
+  }
   if (Input.pressed("Escape")) {
     if (
       activePanel === "inventory" ||
       activePanel === "skills" ||
-      activePanel === "bestiary"
+      activePanel === "bestiary" ||
+      activePanel === "map"
     )
       closePanel();
     else if (activePanel === "pause") resume();
@@ -130,6 +137,8 @@ export function updateMenus() {
     // - Esc did nothing until the grace auto-pause fired.
     else showPause();
   }
+
+  if (activePanel === "map") updateExpandedMap(els.mapCanvas, dt);
 
   // Fallback: pointer lost without a lock-change callback (missed event,
   // OS-level focus steal). Only after the relock grace window has passed;
@@ -238,6 +247,12 @@ function openPanel(name) {
   if (name === "inventory") refreshInventory();
   else if (name === "skills") refreshSkills();
   else if (name === "bestiary") refreshBestiary();
+  else if (name === "map") {
+    renderExpandedMap(els.mapCanvas);
+    els.mapStatus.textContent = G.mapRevealed
+      ? "FRONTIER SURVEY COMPLETE"
+      : "FOCUS-SCAN A VANTAGE TO REVEAL THE FRONTIER";
+  }
   Input.unlockPointer();
   bus.emit("ui", { action: "open" });
 }
@@ -246,7 +261,8 @@ function closePanel() {
   if (
     activePanel !== "inventory" &&
     activePanel !== "skills" &&
-    activePanel !== "bestiary"
+    activePanel !== "bestiary" &&
+    activePanel !== "map"
   )
     return;
   const name = activePanel;
@@ -638,6 +654,33 @@ function buildDom() {
     els.bestiaryLore[type] = card.querySelector(`[data-lore="${type}"]`);
   }
 
+  // WORLD MAP
+  const map = document.createElement("div");
+  map.className = "iw-screen hidden";
+  setPanelHtml(
+    map,
+    `
+    <div class="iw-panel iw-map-panel">
+      <div class="iw-panel-title">FRONTIER MAP</div>
+      <div class="iw-map-wrap">
+        <canvas id="iw-world-map" aria-label="World map"></canvas>
+        <div class="iw-map-legend">
+          <span><i class="iw-legend-dot iw-legend-player"></i>YOU</span>
+          <span><i class="iw-legend-dot iw-legend-quest"></i>CONTRACT</span>
+          <span><i class="iw-legend-dot iw-legend-expedition"></i>EXPEDITION</span>
+          <span><i class="iw-legend-dot iw-legend-landmark"></i>LANDMARK</span>
+          <span><i class="iw-legend-dot iw-legend-danger"></i>MACHINE</span>
+        </div>
+      </div>
+      <div class="iw-map-status">${G.mapRevealed ? "FRONTIER SURVEY COMPLETE" : "FOCUS-SCAN A VANTAGE TO REVEAL THE FRONTIER"}</div>
+      <div class="iw-hint">[M] or [ESC] to close · map pauses the hunt</div>
+    </div>`,
+  );
+  document.body.appendChild(map);
+  els.map = map;
+  els.mapCanvas = map.querySelector("#iw-world-map");
+  els.mapStatus = map.querySelector(".iw-map-status");
+
   // DEATH
   const death = document.createElement("div");
   death.className = "iw-death";
@@ -668,6 +711,21 @@ function injectStyles() {
   padding:28px 36px;display:flex;flex-direction:column;align-items:center;gap:12px;
   min-width:280px;}
 .iw-panel.iw-wide{min-width:520px;max-width:92vw;}
+.iw-map-panel{min-width:min(780px,92vw);max-width:92vw;}
+.iw-map-wrap{position:relative;width:min(720px,78vw);aspect-ratio:1;max-height:68vh;}
+#iw-world-map{display:block;width:100%;height:100%;image-rendering:auto;background:#061016;
+  box-shadow:0 0 0 1px rgba(89,227,255,.24),0 12px 34px rgba(0,0,0,.45);}
+.iw-map-legend{position:absolute;left:12px;bottom:12px;display:flex;flex-wrap:wrap;gap:8px 14px;
+  padding:7px 9px;background:rgba(4,7,10,.78);font-size:10px;letter-spacing:.08em;color:rgba(223,231,234,.78);}
+.iw-map-legend span{display:flex;align-items:center;gap:5px;}
+.iw-legend-dot{width:7px;height:7px;display:inline-block;border-radius:50%;}
+.iw-legend-player{background:#eef6f8;}
+.iw-legend-quest{background:#f2c14e;}
+.iw-legend-expedition{background:#59e3ff;}
+.iw-legend-landmark{background:#f1d58a;}
+.iw-legend-danger{background:#ff4d3d;}
+.iw-map-status{font-size:11px;letter-spacing:.15em;color:#59e3ff;}
+
 .iw-panel-title,.iw-title{letter-spacing:.35em;font-weight:700;}
 .iw-panel-title{font-size:18px;margin-bottom:6px;color:#eef6f8;}
 

@@ -52,11 +52,8 @@ let _smoothInit = false;
 let _rmbDown = false;
 let _installed = false;
 
-// v2: free-cursor fallback look. Input only accumulates mouse deltas while
-// pointer-locked, so when the browser denied lock (Input.lockBroken) we track
-// movement ourselves and add it to the consumed deltas each frame.
-let _fbDX = 0;
-let _fbDY = 0;
+// v2: free-cursor fallback deltas are accumulated by Input alongside
+// pointer-lock deltas; this module consumes one authoritative stream.
 
 // v2: impact shake from 'camShake' bus events (only this module applies it).
 let _shakeAmp = 0;
@@ -67,11 +64,6 @@ let _shakePhase = 0;
 function onMouseDown(e) { if (e.button === 2) _rmbDown = true; }
 function onMouseUp(e) { if (e.button === 2) _rmbDown = false; }
 function onBlur() { _rmbDown = false; }
-function onMouseMoveFallback(e) {
-  if (Input.locked || !Input.lockBroken) return;
-  _fbDX += e.movementX || 0;
-  _fbDY += e.movementY || 0;
-}
 function onCamShake(payload) {
   const amp = payload && typeof payload.amp === 'number' ? payload.amp : 0;
   if (amp <= 0) return;
@@ -89,7 +81,6 @@ export function createCameraRig() {
   window.addEventListener('mousedown', onMouseDown);
   window.addEventListener('mouseup', onMouseUp);
   window.addEventListener('blur', onBlur);
-  window.addEventListener('mousemove', onMouseMoveFallback);
   bus.on('camShake', onCamShake);
   // The game owns the right mouse button - no browser context menu.
   window.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -102,11 +93,7 @@ export function updateCamera(dt) {
   // --- mouse look ---
   // v2 control gate: pointer lock OR lock-broken fallback, so browsers that
   // deny requestPointerLock still get mouse look via free-cursor movement.
-  const { dx, dy } = Input.consumeMouse();
-  const mdx = dx + _fbDX;
-  const mdy = dy + _fbDY;
-  _fbDX = 0;
-  _fbDY = 0;
+  const { dx: mdx, dy: mdy } = Input.consumeMouse();
   const control = G.started && !G.paused && (Input.locked || Input.lockBroken);
   if (control) {
     // Live settings from ui/settings.js: sensitivity + inverted Y.

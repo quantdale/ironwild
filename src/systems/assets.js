@@ -1,9 +1,8 @@
 // IRONWILD - centralized asset pipeline (Wave B infrastructure).
 // Single gateway for authored GLB content (see src/assets/manifest.js for the
-// registry + authoring conventions). Nothing in the game consumes this yet -
-// it exists so final binaries drop into /assets/<category>/<id>.glb later and
-// spawn code flips from procedural fallbacks to instantiate() with zero new
-// loader code.
+// registry + authoring conventions). World landmarks and machine animators
+// consume this gateway when authored files are present; every caller retains a
+// procedural fallback when an asset or optional decoder is unavailable.
 //
 // Contract highlights:
 //   - load(id) -> Promise<glTF>, deduped in-flight, cached, never re-fetched

@@ -1801,7 +1801,7 @@ function emitPrompt(text) {
   myPrompt = text;
   myPromptAt = G.elapsed;
   inSelfPrompt = true;
-  bus.emit('prompt', { text });
+  bus.emit('prompt', { source: 'carcass', priority: 1, text });
   inSelfPrompt = false;
 }
 

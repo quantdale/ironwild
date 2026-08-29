@@ -3,33 +3,34 @@
 // Drives the perf module directly through window.__IW.perf so the spec does
 // not depend on keyboard focus.
 import { expect, test } from '@playwright/test';
-import { gotoGame, watchConsole } from './helpers.js';
+import { gotoGame, SWGL_POLL_MS, SWGL_SPEC_MS, watchConsole } from './helpers.js';
 
 const HUD_SELECTOR = '#iw-perf-hud';
 
 test('F3 telemetry HUD toggles without DOM duplication', async ({ page }) => {
+  test.setTimeout(SWGL_SPEC_MS);
   const watched = watchConsole(page);
   await gotoGame(page);
 
   // Hidden by default (the element parks in the DOM with visibility off -
   // perf.js builds it once at create and toggles it).
   const count = () => page.locator(HUD_SELECTOR).count();
-  await expect(page.locator(HUD_SELECTOR)).toBeHidden();
+  await expect(page.locator(HUD_SELECTOR)).toBeHidden({ timeout: SWGL_POLL_MS });
 
   // Toggle on via the module API (same path the F3 keydown handler uses).
   await page.evaluate(() => window.__IW.perf.toggleHud());
-  await expect(page.locator(HUD_SELECTOR)).toHaveCount(1);
-  await expect(page.locator(HUD_SELECTOR)).toBeVisible();
+  await expect(page.locator(HUD_SELECTOR)).toHaveCount(1, { timeout: SWGL_POLL_MS });
+  await expect(page.locator(HUD_SELECTOR)).toBeVisible({ timeout: SWGL_POLL_MS });
 
   // Metrics must be live: percentiles move as samples arrive. Under headless
   // software GL every real frame clamps to the same 50ms ceiling, so feed a
   // deterministic burst of varied synthetic frames through the module API and
   // require the HUD text to reflect them.
-  const snap1 = await page.locator(HUD_SELECTOR).innerText();
+  const snap1 = await page.locator(HUD_SELECTOR).innerText({ timeout: SWGL_POLL_MS });
   await page.evaluate(() => {
     for (let i = 0; i < 120; i++) window.__IW.perf.updatePerf(0.008);
   });
-  const snap2 = await page.locator(HUD_SELECTOR).innerText();
+  const snap2 = await page.locator(HUD_SELECTOR).innerText({ timeout: SWGL_POLL_MS });
   expect(snap2).not.toBe(snap1);
   expect(snap2).toContain('FPS');
   expect(snap2).toContain('draw');
@@ -41,9 +42,9 @@ test('F3 telemetry HUD toggles without DOM duplication', async ({ page }) => {
   // Final state: force ON, then OFF via the same API - ends hidden again,
   // still exactly one element (never duplicated across toggles).
   await page.evaluate(() => window.__IW.perf.toggleHud(true));
-  await expect(page.locator(HUD_SELECTOR)).toBeVisible();
+  await expect(page.locator(HUD_SELECTOR)).toBeVisible({ timeout: SWGL_POLL_MS });
   await page.evaluate(() => window.__IW.perf.toggleHud(false));
-  await expect(page.locator(HUD_SELECTOR)).toBeHidden();
+  await expect(page.locator(HUD_SELECTOR)).toBeHidden({ timeout: SWGL_POLL_MS });
   expect(await count()).toBe(1);
 
   const off = watched.offenses();
@@ -52,6 +53,7 @@ test('F3 telemetry HUD toggles without DOM duplication', async ({ page }) => {
 });
 
 test('getReport exposes percentiles and renderer stats during play', async ({ page }) => {
+  test.setTimeout(SWGL_SPEC_MS);
   await gotoGame(page);
   // Let the ring buffer fill with real frames.
   await page.waitForTimeout(8000); // SwiftShader software GL can sit near 1fps here

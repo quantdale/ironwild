@@ -115,6 +115,7 @@ test("certification asset loads through the real pipeline", async ({ page }) => 
         const s = window.__IW_PERF_ASSETS ? window.__IW_PERF_ASSETS() : null;
         return s ? s.cached : 0;
       }),
+      { timeout: SWGL_POLL_MS },
     )
     .toBeGreaterThanOrEqual(1);
 
