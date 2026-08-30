@@ -839,5 +839,21 @@ body.iw-high-contrast #iw-xh.full .iw-retbg{stroke:rgba(255,255,255,.55);}
   text-transform:uppercase;color:rgba(230,240,245,.75);transition:opacity 2.5s;}
 #iw-obj.fade{opacity:0;}
 `;
+  st.textContent += `
+@media (max-width:700px) {
+  #iw-obj { top:calc(14px + env(safe-area-inset-top, 0px)); left:max(10px,env(safe-area-inset-left, 0px)); max-width:42vw; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:10px; letter-spacing:1px; }
+  #iw-compass { top:calc(8px + env(safe-area-inset-top, 0px)); width:min(180px,38vw); height:27px; }
+  #iw-res { top:calc(42px + env(safe-area-inset-top, 0px)); right:max(10px,env(safe-area-inset-right, 0px)); gap:2px; font-size:10px; letter-spacing:.35px; }
+  .iw-resrow { gap:5px; }
+  .iw-sw { width:8px; height:8px; }
+  #iw-bars { left:max(10px,env(safe-area-inset-left, 0px)); bottom:max(12px,env(safe-area-inset-bottom, 0px)); width:min(250px,58vw); }
+  #iw-xpbar, #iw-hpbar, #iw-stbar, #iw-fobar { width:100%; }
+  #iw-ammo { right:max(10px,env(safe-area-inset-right, 0px)); bottom:max(12px,env(safe-area-inset-bottom, 0px)); max-width:calc(100vw - 20px); font-size:17px; letter-spacing:.5px; }
+  #iw-ammo .glyph { margin-right:5px; font-size:19px; }
+  #iw-atype { margin-left:5px; padding:1px 4px; font-size:9px; letter-spacing:1px; }
+  #iw-toasts { top:calc(43px + env(safe-area-inset-top, 0px)); max-width:calc(100vw - 20px); }
+  .iw-toast { max-width:calc(100vw - 20px); overflow:hidden; text-overflow:ellipsis; font-size:11px; padding:4px 9px; }
+  #iw-prompt { bottom:calc(88px + env(safe-area-inset-bottom, 0px)); max-width:calc(100vw - 20px); padding:5px 10px; font-size:12px; overflow:hidden; text-overflow:ellipsis; }
+}`;
   document.head.appendChild(st);
 }

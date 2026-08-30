@@ -602,5 +602,9 @@ function injectStyles() {
 #iw-minimap canvas{width:100%;height:100%;display:block;border-radius:50%;
   box-shadow:0 2px 10px rgba(0,0,0,.45);}
 `;
+  st.textContent += `
+@media (max-width:700px) {
+  #iw-minimap { width:min(140px,36vw); height:min(140px,36vw); }
+}`;
   document.head.appendChild(st);
 }
