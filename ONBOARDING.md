@@ -6,7 +6,7 @@ This is the canonical bootstrap entry point for a new workstation or a fresh cod
 
 1. Clone the repository and enter its root.
 2. Confirm the intended repository/branch and fetch current `origin/main`.
-3. Read the repository control-plane documents before changing code: `README.md`, `ARCHITECTURE*.md`, `.agent/`, active task/campaign state.
+3. Read the repository control-plane documents before changing code: `AGENTS.md`, `README.md`, `ARCHITECTURE*.md`, `.agent/`, active task/campaign state.
 4. Install/verify the machine prerequisites below.
 5. Enable the committed agent integrations and repository-local skills.
 6. Restore dependencies from lockfiles/pins; do not casually upgrade them during bootstrap.
@@ -28,10 +28,9 @@ Credentials, API keys, signing material, account logins, licensed assets, and ot
 **Task-dependent / optional tools**
 - GPU profiling tools/Chrome DevTools when investigating frame-time or rendering regressions
 
-
 ## 3. Agent setup
 
-- Load repository instructions before acting. Prefer committed repository state over chat history.
+- Load `AGENTS.md` before acting. Prefer committed repository state over chat history.
 - Repository-local skills: `goal`.
 - Discover and use committed agent adapter/config directories in-place; do not duplicate them globally unless the harness cannot load repository-local configuration.
 - Relevant committed agent surfaces: `.agent/`, `.agents/`, `.claude/`, `.kimi-code/`, `.opencode/`.
@@ -47,7 +46,6 @@ npx playwright install chromium
 ```
 
 The authored-content GLB/KTX2 pipeline is repository-owned. Do not replace procedural/original assets with third-party copyrighted assets during setup.
-
 
 ## 5. Editor/LSP baseline
 
@@ -69,4 +67,4 @@ A fresh machine is **development-ready** when all applicable non-external gates 
 
 ## 7. Fresh-agent instruction
 
-> Read `ONBOARDING.md` first. Set up every applicable prerequisite, repository-local skill, MCP/plugin, dependency, browser/device/runtime tool, and validation gate described there. Then read the repository's durable agent state and only start implementation after preflight is green or a genuine environment blocker is recorded. Do not replace pinned tooling, skip gates, or invent work to compensate for a missing machine capability.
+> Read `AGENTS.md` and `ONBOARDING.md` first. Set up every applicable prerequisite, repository-local skill, MCP/plugin, dependency, browser/device/runtime tool, and validation gate described there. Then read the repository's durable agent state and only start implementation after preflight is green or a genuine environment blocker is recorded. Do not replace pinned tooling, skip gates, or invent work to compensate for a missing machine capability.

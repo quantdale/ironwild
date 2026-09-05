@@ -26,7 +26,10 @@ npm run verify    # all of the above, in order
 ```
 
 Click the start screen to begin — the game grabs pointer lock for mouse-look.
-Best played in Chrome/Edge/Firefox on desktop.
+Best played in Chrome/Edge/Firefox on desktop. The HUD, quest panel, minimap, and
+other overlays include narrow-screen/safe-area layout rules, but the documented
+control scheme remains keyboard/mouse + pointer lock; responsive HUD layout alone
+should not be interpreted as a touch-control or mobile-gameplay certification.
 
 ## How to play
 
