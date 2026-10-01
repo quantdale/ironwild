@@ -1,13 +1,21 @@
 ## Why
 
-`grantXp` carries the only unbounded accumulator loop in the codebase, and the values it iterates on can be restored from the save slot. `save.js` deliberately re-derives the level threshold on load precisely so a tampered or stale save "can't hand out instant level-ups or **wedge progression**" — but the companion field, the accumulated XP itself, is restored with only a `>= 0` finiteness check and **no upper bound**. Every other accumulator in the project is explicitly guarded (`MAX_TICKS_PER_FRAME` in `combat/status.js`, `guard++ < 4` in `vfx/library.js`, `guard++ < target * N` in every `world/props.js` placement builder); this one is not. A save whose accumulated XP is far above the level threshold makes the loop run thousands of times synchronously inside a single `grantXp` call, emitting thousands of `notify` and `levelUp` events (each creating HUD toasts and audio voices) and stalling the frame.
+> **Revised after `origin/main` merge (commit 7786150 / f5bd8d5).** The load-path half of this finding has since been fixed independently: `systems/save.js` now clamps `level` to `1..MAX_LEVEL` and `cur` to `0 .. next-1` via a `bounded()` helper before assigning. That closes the tampered-save trigger this change originally identified. Two residual gaps remain, and this change now covers only those.
+
+`grantXp` carries the only unbounded accumulator loop in the codebase, and the loop's termination condition depends on an invariant (`cur < next`) that **only the save loader now enforces**:
+
+- `createXp()` normalizes non-finite/negative `level`/`cur`/`next` individually, but never checks the `cur < next` relationship, so a partially-initialized or future-restored `G.xp` can violate it at boot.
+- `grantXp()`'s `while (G.xp.cur >= G.xp.next)` has no iteration guard, so any path that violates the invariant produces unbounded synchronous work and unbounded `notify`/`levelUp` emissions.
+
+Every other accumulator in the project is explicitly guarded (`MAX_TICKS_PER_FRAME` in `combat/status.js`, `guard++ < 4` in `vfx/library.js`, `guard++ < target * N` in every `world/props.js` placement builder); this one is not. The residual risk is no longer "a hand-edited save stalls the game" — it is "the invariant is enforced in exactly one place, so any second restore path, boot-order change, or future feature that writes `G.xp` re-opens the same unbounded loop".
 
 ## What Changes
 
-- **Bound the level-up loop.** The loop that carries XP across level thresholds must have a finite iteration bound, matching the guard style already used elsewhere in the project, so a single grant can never spend an unbounded amount of time or emit an unbounded number of events.
-- **Bound restored progression data.** Progression state restored from a save must be validated so that accumulated XP is consistent with the level threshold, matching the validation already applied to the threshold itself. A save whose values are inconsistent must be repaired to a consistent state rather than left to be resolved on the first grant.
-- **Preserve legitimate multi-level grants.** A normal grant that legitimately crosses several thresholds (a large single reward, a streak bonus) must still award every threshold crossed — the bound must not truncate normal play.
-- **Add regression coverage** for the corrupt-save case, the large-legitimate-grant case, and the existing normal cases.
+- **State and enforce the `cur < next` invariant at every entry point**, not only in the save loader: `createXp()` should establish it at boot alongside the existing per-field normalization.
+- **Bound the level-up loop.** The loop that carries XP across level thresholds must have a finite iteration bound, matching the guard style already used elsewhere in the project, so a single grant can never spend unbounded time or emit unbounded events regardless of how the invariant was reached.
+- **Preserve legitimate multi-level grants.** A normal grant that legitimately crosses several thresholds (a large reward, a streak bonus) must still award every threshold crossed — the bound must not truncate normal play.
+- **Honor the existing `MAX_LEVEL` ceiling** rather than introducing a second, competing cap for level advancement.
+- **Add regression coverage** for the boot-time invariant, the loop bound, and the existing normal cases.
 - No change to the XP curve, the reward amounts, or the leveling rewards themselves.
 
 ## Capabilities
@@ -20,6 +28,6 @@
 
 ## Impact
 
-- Affected code: `src/systems/xp.js` (`grantXp` loop bound, `createXp` normalization), `src/systems/save.js` (`loadGame` progression validation), `tests/unit/` (progression unit suite — the natural home is the XP suite added by `harden-core-verification`), and a comment in `src/systems/save.js` recording that both progression fields are now validated.
+- Affected code: `src/systems/xp.js` (`grantXp` loop bound, `createXp` invariant enforcement). `src/systems/save.js` is **already correct** for the load path and needs no change beyond a comment if one is useful.
 - No change to the level curve, XP reward values, skill-point grant, or any persisted field's meaning.
 - Player-visible only in the corrupt-save case, where the current behavior is a multi-second stall at run start.

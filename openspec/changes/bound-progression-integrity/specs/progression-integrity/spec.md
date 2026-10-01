@@ -8,34 +8,44 @@ Defines that level progression is robust against restored or corrupted data: a s
 
 Applying an experience grant SHALL terminate within a bounded amount of work regardless of the accumulated experience present, and SHALL NOT emit an unbounded number of level-up notifications or events.
 
-#### Scenario: Corrupted progression cannot stall a grant
-- **WHEN** progression state holds an accumulated experience value far above the current level threshold
+#### Scenario: Inconsistent progression cannot stall a grant
+- **WHEN** progression state holds accumulated experience at or above the current level threshold
 - **THEN** applying a grant completes within a bounded number of level-up steps
 - **AND** the number of level-up notifications emitted is bounded
+
+#### Scenario: Normal gameplay is not truncated
+- **WHEN** progression state is consistent and a grant is applied
+- **THEN** the grant is not truncated by the bound
+
+#### Scenario: Level advancement stays within the supported range
+- **WHEN** progression reaches the maximum supported level
+- **THEN** the level does not advance beyond that range during ordinary play
 
 #### Scenario: A normal grant is unaffected
 - **WHEN** accumulated experience is below the current level threshold
 - **THEN** the grant behaves as before, with no additional work and no truncation
 
-### Requirement: Restored progression state is made consistent on load
+### Requirement: Progression invariants hold at every entry point
 
-When progression state is loaded from a save, the loaded values SHALL be validated against the level curve. An inconsistent pair of accumulated experience and level threshold SHALL be repaired to a consistent state at load time, not left for the next grant to resolve.
+Progression state SHALL satisfy the relationship `cur < next` after being established at boot, not only when restored from a save. A boot sequence, a partial restore, or any future path that establishes progression state SHALL NOT be able to leave accumulated experience at or above the level threshold.
 
-#### Scenario: Excessive accumulated experience is clamped on load
-- **WHEN** a save reports an accumulated experience value at or above the level threshold for the reported level
-- **THEN** the restored progression is left in a state where accumulated experience is below the level threshold
+#### Scenario: Boot establishes the relationship
+- **WHEN** progression state is initialized at boot with individually valid but mutually inconsistent values
+- **THEN** the initialized state has accumulated experience below the level threshold
 
-#### Scenario: A consistent save is preserved exactly
-- **WHEN** a save reports accumulated experience below the level threshold for its level
-- **THEN** the restored progression matches the saved values exactly
+#### Scenario: Restored progression is made consistent on load
+- **WHEN** progression state is loaded from a save
+- **THEN** the restored progression has accumulated experience below the level threshold
+- **AND** the level threshold is derived from the level curve rather than taken from the save
+- **AND** the level is within the supported range
 
 #### Scenario: Non-finite values are rejected
 - **WHEN** a save reports a non-finite or negative level, accumulated experience, or threshold
 - **THEN** the restored progression falls back to safe defaults rather than adopting the invalid value
 
-#### Scenario: The threshold is still derived, never trusted
-- **WHEN** any save is loaded
-- **THEN** the level threshold is derived from the level curve rather than taken from the save
+#### Scenario: A consistent save is preserved exactly
+- **WHEN** a save reports accumulated experience below the level threshold for its level
+- **THEN** the restored progression matches the saved values exactly
 
 ### Requirement: Legitimate multi-level grants award every threshold
 
