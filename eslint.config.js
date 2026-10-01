@@ -3,7 +3,7 @@ import globals from 'globals';
 
 export default [
   {
-    ignores: ['node_modules/**', 'dist/**', '.build-check*/**', 'screenshots/**', '.playwright-mcp/**'],
+    ignores: ['node_modules/**', 'dist/**', 'public/assets/vendor/**', '.build-check*/**', 'screenshots/**', '.playwright-mcp/**'],
   },
   {
     // Config files run in node, not the browser.

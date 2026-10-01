@@ -39,6 +39,7 @@ const DEFAULT_BINDINGS = {
   quicksave: ["KeyP"],
   melee: ["KeyF"],
   arrowToggle: ["KeyX"],
+  map: ["KeyM"],
   aim: ["Mouse2"], // right mouse button (camera.js owns the real listener)
   fire: ["Mouse0"], // left mouse button (bow.js owns the real listener)
   uinavUp: ["ArrowUp"],
@@ -90,6 +91,8 @@ class InputManager {
     this.pressedSet = new Set(); // keys pressed since the last endFrame()
     this.mouseDX = 0; // accumulated mouse movement since last consumeMouse()
     this.mouseDY = 0;
+    this._cursorX = null;
+    this._cursorY = null;
     this.wheelDelta = 0;
     this.locked = false; // pointer lock active
     this.lockBroken = false; // browser denied lock repeatedly -> fallback look
@@ -156,6 +159,8 @@ class InputManager {
       this._actionDown = {};
       this._actionPrev = {}; // no phantom rising edges across a focus loss
       this._edgePending.clear();
+      this._cursorX = null;
+      this._cursorY = null;
     });
 
     // Mouse-button tracking feeds the 'MouseN' pseudo-bindings only; the real
@@ -177,9 +182,28 @@ class InputManager {
     });
 
     window.addEventListener("mousemove", (e) => {
-      if (!this.locked) return;
-      this.mouseDX += e.movementX || 0;
-      this.mouseDY += e.movementY || 0;
+      const movementX = Number.isFinite(e.movementX) ? e.movementX : 0;
+      const movementY = Number.isFinite(e.movementY) ? e.movementY : 0;
+      if (movementX !== 0 || movementY !== 0) {
+        this.mouseDX += movementX;
+        this.mouseDY += movementY;
+        if (Number.isFinite(e.clientX) && Number.isFinite(e.clientY)) {
+          this._cursorX = e.clientX;
+          this._cursorY = e.clientY;
+        }
+        return;
+      }
+      if (!Number.isFinite(e.clientX) || !Number.isFinite(e.clientY)) return;
+      // Some headless locked sessions expose client coordinates but zero
+      // movementX/Y. Use the position delta as a standards-compatible fallback
+      // in both locked and free-cursor modes; seed the first event to avoid a
+      // jump when pointer lock is acquired.
+      if (this._cursorX != null && this._cursorY != null) {
+        this.mouseDX += e.clientX - this._cursorX;
+        this.mouseDY += e.clientY - this._cursorY;
+      }
+      this._cursorX = e.clientX;
+      this._cursorY = e.clientY;
     });
     window.addEventListener(
       "wheel",
@@ -191,6 +215,8 @@ class InputManager {
     document.addEventListener("pointerlockchange", () => {
       const nowLocked = document.pointerLockElement === this._element;
       this.locked = nowLocked;
+      this._cursorX = null;
+      this._cursorY = null;
       if (nowLocked) {
         lockFails = 0; // a real lock clears the failure streak...
         this.lockBroken = false; // ...so transient errors can't degrade the session
@@ -337,6 +363,16 @@ class InputManager {
       return this._aimLatch;
     }
     return !!this._actionDown[action];
+  }
+
+  /** True when another action shares any effective binding with `action`. */
+  isActionShared(action) {
+    const own = this._effective()[action];
+    if (!own) return false;
+    for (const [other, codes] of Object.entries(this._effective())) {
+      if (other !== action && codes.some((code) => own.includes(code))) return true;
+    }
+    return false;
   }
 
   /** True only on the frame `action` transitioned from released to held. */

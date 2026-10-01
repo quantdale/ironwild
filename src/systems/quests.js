@@ -246,6 +246,14 @@ function injectStyles() {
 @keyframes iwqflash{0%,100%{background:rgba(8,12,16,.55);}
   50%{background:rgba(46,84,50,.75);}}
 `;
+  st.textContent += `
+@media (max-width:700px) {
+  #iw-quests { top:calc(42px + env(safe-area-inset-top, 0px)); left:max(10px,env(safe-area-inset-left, 0px)); right:calc(140px + env(safe-area-inset-right, 0px)); width:min(216px,calc(100vw - 160px - env(safe-area-inset-right, 0px))); gap:3px; }
+  .iw-qslot { min-width:0; width:100%; box-sizing:border-box; gap:5px; padding:4px 6px; }
+  .iw-qicon { width:14px; flex:0 0 14px; font-size:12px; }
+  .iw-qrow { gap:5px; font-size:10px; letter-spacing:.2px; }
+  .iw-qname { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+}`;
   document.head.appendChild(st);
 }
 

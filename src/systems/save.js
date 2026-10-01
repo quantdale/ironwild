@@ -12,14 +12,49 @@ import { Input } from '../core/input.js';
 import { clamp } from '../core/utils.js';
 import { isValidQuest } from './quests.js';
 import { nextFor } from './xp.js';
+import { normalizeExpeditionState } from './expedition.js';
 
 const SAVE_KEY = 'ironwild-save';
-const SAVE_VERSION = 3; // v3->v4: added bestiary (loader tolerates the old shape)
+const SAVE_VERSION = 4; // v4: persists the bounded expedition objective
 const AUTOSAVE_INTERVAL = 90; // seconds between autosaves
+const MAX_RESOURCE = 9999;
+const MAX_MEDICINE = 99;
+const MAX_LEVEL = 100;
+const KNOWN_BESTIARY_TYPES = new Set([
+  'skitter', 'bramblehorn', 'rendclaw', 'ironmaw', 'duskwing',
+  'bulwark', 'vantage', 'mirefang', 'monarch',
+]);
 
 let inited = false;
 let autosaveT = 0;      // seconds since last save (counts while playing)
 let wasPaused = false;  // rising edge of G.paused -> snapshot progress
+
+function finiteNumber(value, fallback) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function bounded(value, min, max, fallback = min) {
+  return clamp(finiteNumber(value, fallback), min, max);
+}
+
+function restoreInventory(saved) {
+  if (!saved || typeof saved !== 'object') return;
+  const caps = {
+    shards: MAX_RESOURCE,
+    wood: MAX_RESOURCE,
+    oil: MAX_RESOURCE,
+    hide: MAX_RESOURCE,
+    medicine: MAX_MEDICINE,
+    arrows: G.inventory.maxArrows,
+    fireArrows: G.inventory.maxFireArrows,
+    skillPoints: MAX_RESOURCE,
+    armor: 2,
+  };
+  for (const [key, cap] of Object.entries(caps)) {
+    if (typeof saved[key] !== 'number' || !Number.isFinite(saved[key])) continue;
+    G.inventory[key] = Math.floor(clamp(saved[key], 0, cap));
+  }
+}
 
 /** True when a save exists in localStorage (storage errors count as "no"). */
 export function hasSave() {
@@ -50,6 +85,7 @@ function serialize() {
     quests: { completed: G.quests.completed, genCount: G.quests.genCount | 0, slots },
     xp: Object.assign({}, G.xp),           // v4: level progress used to reset on every load
     bestiary: Object.assign({}, G.bestiary), // v4: discovered/killed species
+    expedition: normalizeExpeditionState(G.expedition),
   };
 }
 
@@ -94,7 +130,8 @@ export function loadGame() {
   if (!data || !Number.isInteger(data.v) || data.v < 2 || data.v > SAVE_VERSION ||
     !Array.isArray(data.pos) || data.pos.length < 3 ||
     !data.pos.every(Number.isFinite) ||
-    Math.abs(data.pos[0]) + Math.abs(data.pos[2]) > CONFIG.worldSize) return false;
+    Math.hypot(data.pos[0], data.pos[2]) > CONFIG.playRadius + 12 ||
+    data.pos[1] < -48 || data.pos[1] > 220) return false;
   if (!G.player || !G.player.pos) return false;
 
   G.player.pos.set(data.pos[0], data.pos[1], data.pos[2]);
@@ -109,15 +146,10 @@ export function loadGame() {
       if (v === 0 || v === 1) G.skills[k] = v;
     }
   }
-  G.player.hp = Math.max(1, Number(data.hp) || 1); // never load back dead
-  G.player.stamina = clamp(Number(data.stamina) || 0, 0, G.player.maxStamina);
+  G.player.hp = bounded(data.hp, 1, 1000, G.player.maxHp || 100); // never load back dead
+  G.player.stamina = bounded(data.stamina, 0, G.player.maxStamina || 100, 0);
 
-  if (data.inventory && typeof data.inventory === 'object') {
-    for (const k in G.inventory) {
-      const v = data.inventory[k];
-      if (typeof v === 'number' && isFinite(v)) G.inventory[k] = v;
-    }
-  }
+  restoreInventory(data.inventory);
   if (typeof data.timeOfDay === 'number' && isFinite(data.timeOfDay)) {
     let t = data.timeOfDay % 1;
     if (t < 0) t += 1;
@@ -126,10 +158,10 @@ export function loadGame() {
   G.mapRevealed = !!data.mapRevealed;
 
   if (data.quests && Array.isArray(data.quests.slots)) {
-    G.quests.completed = data.quests.completed | 0;
+    G.quests.completed = Math.floor(bounded(data.quests.completed, 0, 9999, 0));
     // Contracts generated so far (drives the forced opening trio); absent on
     // v3 saves -> 0, which replays the trio exactly like those boots did.
-    G.quests.genCount = data.quests.genCount | 0;
+    G.quests.genCount = Math.floor(bounded(data.quests.genCount, 0, 9999, 0));
     for (let i = 0; i < 3; i++) {
       const q = data.quests.slots[i];
       // Malformed records (NaN refillT etc.) would wedge their slot forever -
@@ -142,21 +174,19 @@ export function loadGame() {
   // v4: absent on saves from before the bestiary/xp-persist update - the
   // xp.js/bestiary.js create() defaults already on G stand in for those runs.
   if (data.xp && typeof data.xp === 'object') {
-    if (Number.isFinite(data.xp.level) && data.xp.level >= 1) G.xp.level = data.xp.level;
-    if (Number.isFinite(data.xp.cur) && data.xp.cur >= 0) G.xp.cur = data.xp.cur;
-    // `next` is never trusted from the save: recompute it from the level
-    // curve so a tampered/stale threshold can't hand out instant level-ups
-    // or wedge progression. (grantXp keeps next == nextFor(level) in play,
-    // so this only ever corrects inconsistent saves.)
+    G.xp.level = Math.floor(bounded(data.xp.level, 1, MAX_LEVEL, G.xp.level || 1));
     G.xp.next = nextFor(G.xp.level);
+    G.xp.cur = Math.floor(bounded(data.xp.cur, 0, G.xp.next - 1, G.xp.cur || 0));
   }
   if (data.bestiary && typeof data.bestiary === 'object') {
     for (const type in data.bestiary) {
+      if (!KNOWN_BESTIARY_TYPES.has(type)) continue;
       const e = data.bestiary[type];
       if (!e || typeof e !== 'object') continue;
       G.bestiary[type] = { seen: !!e.seen, killed: !!e.killed };
     }
   }
+  G.expedition = normalizeExpeditionState(data.expedition);
   return true;
 }
 

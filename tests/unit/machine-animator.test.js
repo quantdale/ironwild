@@ -9,21 +9,29 @@ import * as THREE from 'three';
 
 async function loadFresh() {
   vi.resetModules();
-  const [state, anim] = await Promise.all([
+  const [state, anim, assets] = await Promise.all([
     import('../../src/core/state.js'),
     import('../../src/anim/machineAnim.js'),
+    import('../../src/systems/assets.js'),
   ]);
-  return { G: state.G, ...anim };
+  return { G: state.G, assets, ...anim };
 }
 
 /** Machine double carrying only the surface machineAnim touches. */
-function makeMachineDouble({ type = 'skitter' } = {}) {
+function makeMachineDouble({ type = 'skitter', assetId } = {}) {
   return {
     type,
-    assetId: undefined, // falsy -> procedural path guaranteed
+    assetId, // falsy -> procedural path; authored ids exercise cache ownership
     group: new THREE.Group(),
     weakPoints: [],
     _disposed: false,
+  };
+}
+
+function authoredInstance() {
+  return {
+    scene: new THREE.Object3D(),
+    animations: [new THREE.AnimationClip('loc_idle', 1, [])],
   };
 }
 
@@ -57,16 +65,47 @@ describe('attach lifecycle', () => {
     }
   });
 
-  it('a disposed animator is never resurrected: re-attach hands out a fresh one', async () => {
-    const { attachMachineAnimator } = await loadFresh();
-    const m = makeMachineDouble();
-    const dead = attachMachineAnimator(m);
-    dead.dispose();
-    // Caller forgot to clear m.animator: attach must still yield clean state.
-    const fresh = attachMachineAnimator(m);
-    expect(fresh).not.toBe(dead);
-    expect(fresh._disposed).toBe(false);
-    expect(m.animator).toBe(fresh);
+  it('holds an asset cache reference for an authored clone and releases it once', async () => {
+    const { attachMachineAnimator, assets } = await loadFresh();
+    const previous = window.__IW_ASSETS;
+    window.__IW_ASSETS = { instantiate: () => Promise.resolve(authoredInstance()) };
+    try {
+      const m = makeMachineDouble({ assetId: 'skitter' });
+      const animator = attachMachineAnimator(m);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(animator.mode).toBe('authored');
+      expect(animator._assetAcquired).toBe(true);
+      expect(assets.getStats().refs).toBe(1);
+
+      animator.dispose();
+      animator.dispose();
+      expect(animator._assetAcquired).toBe(false);
+      expect(assets.getStats().refs).toBe(0);
+    } finally {
+      window.__IW_ASSETS = previous;
+    }
+  });
+
+  it('ignores an authored asset that resolves after the animator is disposed', async () => {
+    const { attachMachineAnimator, assets } = await loadFresh();
+    const previous = window.__IW_ASSETS;
+    let resolveAsset;
+    const pending = new Promise((resolve) => { resolveAsset = resolve; });
+    window.__IW_ASSETS = { instantiate: () => pending };
+    try {
+      const m = makeMachineDouble({ assetId: 'skitter' });
+      const animator = attachMachineAnimator(m);
+      animator.dispose();
+      resolveAsset(authoredInstance());
+      await pending;
+      await Promise.resolve();
+      expect(animator.mode).toBe('procedural');
+      expect(animator._assetAcquired).toBe(false);
+      expect(assets.getStats().refs).toBe(0);
+    } finally {
+      window.__IW_ASSETS = previous;
+    }
   });
 });
 

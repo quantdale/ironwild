@@ -13,6 +13,7 @@ import { G } from '../core/state.js';
 
 const LS_KEY = 'ironwild-tips';
 const SCAN_DIST2 = 40 * 40; // hint when any alive machine is within 40u
+const TRIGGER_POLL_INTERVAL = 0.1; // hints do not need render-rate proximity scans
 const TIP_TIME = 5.0;       // total card lifetime: fade-in + hold + fade-out (s)
 const FADE = 0.4;           // css transition time for both fades (s)
 const BASE_BOTTOM = 64;     // idle anchor: just above the ammo counter
@@ -39,6 +40,7 @@ let curT = 0;          // age of the current card
 let fading = false;    // fade-out class already removed
 let placed = false;
 let placedBottom = -1;
+let triggerPollT = TRIGGER_POLL_INTERVAL;
 
 // ---------------------------------------------------------------- public ----
 
@@ -69,7 +71,16 @@ export function updateTips(dt) {
   if (typeof dt !== 'number' || !isFinite(dt)) dt = 1 / 60;
   if (!placed) tryPlace();
 
-  if (G.started && !G.gameOver) pollTriggers();
+  if (G.started && !G.gameOver) {
+    triggerPollT += dt;
+    if (triggerPollT >= TRIGGER_POLL_INTERVAL) {
+      triggerPollT %= TRIGGER_POLL_INTERVAL;
+      pollTriggers();
+    }
+  } else {
+    // A new run should scan immediately instead of inheriting a stale timer.
+    triggerPollT = TRIGGER_POLL_INTERVAL;
+  }
 
   if (!cur && queue.length > 0) showNext(queue.shift());
 

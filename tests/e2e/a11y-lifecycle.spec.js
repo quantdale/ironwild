@@ -85,8 +85,10 @@ test("every live machine has exactly one animator; death disposes it", async ({
     if (window.__IW.victim) window.__IW.victim.hit(99999, null, null);
   });
   await expect
-    .poll(() =>
-      page.evaluate(() => window.__IW.victim && !window.__IW.victim.alive),
+    .poll(
+      () =>
+        page.evaluate(() => window.__IW.victim && !window.__IW.victim.alive),
+      { timeout: SWGL_POLL_MS },
     )
     .toBe(true);
 

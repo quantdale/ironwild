@@ -74,6 +74,11 @@ let objFaded = false;
 let releaseFlash = 0;             // reticle kick on arrow release
 let xhAiming = false;
 let ammoCache = '';
+let hpBarCache = -1;
+let ghostBarCache = -1;
+let staminaBarCache = -1;
+let focusBarCache = -1;
+let lowHpCache = null;
 const resCache = {};
 const toasts = [];                // { el, t }
 
@@ -92,6 +97,8 @@ let lvCache = '';                 // applied 'LV n' badge text
 // v5 animation state
 let bowPhase = 'idle';            // mirror of player/bow.js's FSM, fed by 'bowState'
 let uiScaleCache = null;          // last scale applied to SCALED_WIDGETS (null = never)
+let compassTransformCache = null;
+const promptClaims = new Map();   // source -> { text, priority }
 
 const _v = new THREE.Vector3();     // scratch, reused
 const _hdPos = new THREE.Vector3(); // world pos of the last damage source
@@ -224,11 +231,31 @@ export function updateHUD(dt) {
   } else if (sinceHit > 0.45) {
     ghostF = Math.max(hpF, ghostF - dt * 0.4); // ghost bleeds down after a beat
   }
-  els.hpFill.style.width = (hpF * 100).toFixed(1) + '%';
-  els.hpGhost.style.width = (ghostF * 100).toFixed(1) + '%';
-  els.stFill.style.width = (clamp(p.stamina / p.maxStamina, 0, 1) * 100).toFixed(1) + '%';
-  els.foFill.style.width = (getFocusFraction() * 100).toFixed(1) + '%';
-  els.vig.classList.toggle('on', hpF < 0.3);
+  const hpPct = Math.round(hpF * 1000) / 10;
+  if (hpPct !== hpBarCache) {
+    hpBarCache = hpPct;
+    els.hpFill.style.width = hpPct.toFixed(1) + '%';
+  }
+  const ghostPct = Math.round(ghostF * 1000) / 10;
+  if (ghostPct !== ghostBarCache) {
+    ghostBarCache = ghostPct;
+    els.hpGhost.style.width = ghostPct.toFixed(1) + '%';
+  }
+  const staminaPct = Math.round(clamp(p.stamina / p.maxStamina, 0, 1) * 1000) / 10;
+  if (staminaPct !== staminaBarCache) {
+    staminaBarCache = staminaPct;
+    els.stFill.style.width = staminaPct.toFixed(1) + '%';
+  }
+  const focusPct = Math.round(getFocusFraction() * 1000) / 10;
+  if (focusPct !== focusBarCache) {
+    focusBarCache = focusPct;
+    els.foFill.style.width = focusPct.toFixed(1) + '%';
+  }
+  const lowHp = hpF < 0.3;
+  if (lowHp !== lowHpCache) {
+    lowHpCache = lowHp;
+    els.vig.classList.toggle('on', lowHp);
+  }
 
   // low-hp desaturation ramp (backdrop grayscale below LOW_HP)
   const dg = hpF < LOW_HP ? ((LOW_HP - hpF) / LOW_HP) * DESAT_MAX : 0;
@@ -263,8 +290,12 @@ export function updateHUD(dt) {
 
   // compass: yaw=0 faces north (-Z); heading degrees clockwise from north
   const heading = ((-G.cam.yaw * RAD2DEG) % 360 + 360) % 360;
-  els.strip.style.transform =
+  const compassTransform =
     `translateX(${(COMPASS_W / 2 - (heading + 90) * PX_PER_DEG).toFixed(2)}px)`;
+  if (compassTransform !== compassTransformCache) {
+    compassTransformCache = compassTransform;
+    els.strip.style.transform = compassTransform;
+  }
   updateDots(heading);
 
   // crosshair / bow reticle
@@ -304,11 +335,24 @@ function updateDots(heading) {
       let rel = bearing - heading;
       rel = ((rel + 540) % 360) - 180; // wrap to [-180,180]
       const d = dotPool[di++];
-      d.style.display = 'block';
-      d.style.left = clamp(COMPASS_W / 2 + rel * PX_PER_DEG, 6, COMPASS_W - 6) + 'px';
+      if (d.__iwDisplay !== 'block') {
+        d.__iwDisplay = 'block';
+        d.style.display = 'block';
+      }
+      const left = clamp(COMPASS_W / 2 + rel * PX_PER_DEG, 6, COMPASS_W - 6) + 'px';
+      if (d.__iwLeft !== left) {
+        d.__iwLeft = left;
+        d.style.left = left;
+      }
     }
   }
-  for (; di < dotPool.length; di++) dotPool[di].style.display = 'none';
+  for (; di < dotPool.length; di++) {
+    const d = dotPool[di];
+    if (d.__iwDisplay !== 'none') {
+      d.__iwDisplay = 'none';
+      d.style.display = 'none';
+    }
+  }
 }
 
 function spawnToast(n) {
@@ -326,12 +370,26 @@ function spawnToast(n) {
 
 function onPrompt(p) {
   if (!els.prompt) return;
-  if (p && p.text) {
-    els.prompt.textContent = String(p.text);
-    els.prompt.style.display = 'block';
-  } else {
-    els.prompt.style.display = 'none';
+  const source = p && typeof p.source === 'string' ? p.source : 'legacy';
+  const priority = p && Number.isFinite(p.priority) ? p.priority : 0;
+  if (!p || !p.text) promptClaims.delete(source);
+  else promptClaims.set(source, { text: String(p.text), priority });
+
+  // Resolve the highest-priority live claim, using insertion order as the
+  // deterministic tie-breaker. Releasing one producer therefore restores a
+  // still-valid pickup/carcass prompt instead of blanking the HUD.
+  let winner = null;
+  for (const [claimSource, claim] of promptClaims) {
+    if (!winner || claim.priority > winner.claim.priority) {
+      winner = { source: claimSource, claim };
+    }
   }
+  if (!winner) {
+    els.prompt.style.display = 'none';
+    return;
+  }
+  els.prompt.textContent = winner.claim.text;
+  els.prompt.style.display = 'block';
 }
 
 function onHitMarker(h) {
@@ -781,5 +839,21 @@ body.iw-high-contrast #iw-xh.full .iw-retbg{stroke:rgba(255,255,255,.55);}
   text-transform:uppercase;color:rgba(230,240,245,.75);transition:opacity 2.5s;}
 #iw-obj.fade{opacity:0;}
 `;
+  st.textContent += `
+@media (max-width:700px) {
+  #iw-obj { top:calc(14px + env(safe-area-inset-top, 0px)); left:max(10px,env(safe-area-inset-left, 0px)); max-width:42vw; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:10px; letter-spacing:1px; }
+  #iw-compass { top:calc(8px + env(safe-area-inset-top, 0px)); width:min(180px,38vw); height:27px; }
+  #iw-res { top:calc(42px + env(safe-area-inset-top, 0px)); right:max(10px,env(safe-area-inset-right, 0px)); gap:2px; font-size:10px; letter-spacing:.35px; }
+  .iw-resrow { gap:5px; }
+  .iw-sw { width:8px; height:8px; }
+  #iw-bars { left:max(10px,env(safe-area-inset-left, 0px)); bottom:max(12px,env(safe-area-inset-bottom, 0px)); width:min(250px,58vw); }
+  #iw-xpbar, #iw-hpbar, #iw-stbar, #iw-fobar { width:100%; }
+  #iw-ammo { right:max(10px,env(safe-area-inset-right, 0px)); bottom:max(12px,env(safe-area-inset-bottom, 0px)); max-width:calc(100vw - 20px); font-size:17px; letter-spacing:.5px; }
+  #iw-ammo .glyph { margin-right:5px; font-size:19px; }
+  #iw-atype { margin-left:5px; padding:1px 4px; font-size:9px; letter-spacing:1px; }
+  #iw-toasts { top:calc(43px + env(safe-area-inset-top, 0px)); max-width:calc(100vw - 20px); }
+  .iw-toast { max-width:calc(100vw - 20px); overflow:hidden; text-overflow:ellipsis; font-size:11px; padding:4px 9px; }
+  #iw-prompt { bottom:calc(88px + env(safe-area-inset-bottom, 0px)); max-width:calc(100vw - 20px); padding:5px 10px; font-size:12px; overflow:hidden; text-overflow:ellipsis; }
+}`;
   document.head.appendChild(st);
 }

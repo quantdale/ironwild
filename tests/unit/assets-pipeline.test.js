@@ -1,8 +1,9 @@
 // IRONWILD - unit tests for the Wave B asset pipeline (src/systems/assets.js)
 // and the manifest placeholders (src/assets/manifest.js).
 //
-// Strategy: the manifest ships ALL entries as url:null (zero authored binaries
-// exist), so most coverage drives the public API straight against that state.
+// Strategy: authored entries are backed by repository-generated binaries while
+// ruin_kit remains a url:null placeholder. Most coverage still drives the
+// public API against that mixed authored/fallback state.
 // For paths behind a real URL (dedupe, failure bookkeeping, refcount eviction,
 // convention resolution) the temporarily-authored-entry trick points one
 // manifest entry at a fake path and __setLoaderForTests() swaps the network/

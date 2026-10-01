@@ -1,8 +1,9 @@
 # IRONWILD
 
 An original open-world machine-hunting action prototype for the browser, built with
-**Three.js 0.166** and **Vite 5**. All assets are procedural — no downloads, no external
-files. Every name, design, and line of code is original.
+**Three.js 0.166** and **Vite 5**. The world is procedural-first, with a small set of
+repository-generated GLB/KTX2 assets used to certify the authored-content pipeline.
+Every name, design, and line of code is original.
 
 ![start](screenshots/ironwild-start.png)
 
@@ -25,7 +26,10 @@ npm run verify    # all of the above, in order
 ```
 
 Click the start screen to begin — the game grabs pointer lock for mouse-look.
-Best played in Chrome/Edge/Firefox on desktop.
+Best played in Chrome/Edge/Firefox on desktop. The HUD, quest panel, minimap, and
+other overlays include narrow-screen/safe-area layout rules, but the documented
+control scheme remains keyboard/mouse + pointer lock; responsive HUD layout alone
+should not be interpreted as a touch-control or mobile-gameplay certification.
 
 ## How to play
 
@@ -51,6 +55,7 @@ grow your skills. Death is permanent per run — restart and try again.
 | I | Inventory & crafting |
 | Tab | Skill tree |
 | B | Bestiary |
+| M | Frontier world map (pauses the hunt) |
 | P | Quicksave |
 | Esc | Pause |
 
@@ -104,6 +109,7 @@ Arrows fly on a real ballistic arc — lead your targets and aim above for dista
 - **Settings**: volume sliders, mouse sensitivity, invert-Y, quality preset, difficulty,
   colorblind cue (all persisted).
 - **Minimap** with fog-of-war until you scan a Vantage.
+- **Frontier expeditions**: one persistent, time-limited objective at a time appears at a deterministic site across the frontier. Secure salvage caches, survey beacons, or relight signal relays for resources and XP; the live site is shown on the minimap and the HUD, with rewards persisted safely across saves.
 
 ### Rendering
 

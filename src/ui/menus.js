@@ -10,6 +10,7 @@ import { Input } from "../core/input.js";
 import * as save from "../systems/save.js";
 import * as settings from "./settings.js";
 import { SPECIES, speciesName, speciesLore } from "../systems/bestiary.js";
+import { renderExpandedMap, updateExpandedMap } from "./minimap.js";
 
 const SKILLS = [
   { id: "heartier", name: "Heartier Frame", desc: "+30 max health" },
@@ -37,12 +38,13 @@ const CONTROLS = [
   ["I", "Inventory"],
   ["TAB", "Skills"],
   ["B", "Bestiary"],
+  ["M", "World map"],
   ["ESC", "Pause"],
 ];
 
 let created = false;
 let els = null;
-let activePanel = null; // null | 'pause' | 'inventory' | 'skills' | 'death'
+let activePanel = null; // null | 'pause' | 'inventory' | 'skills' | 'bestiary' | 'map' | 'death'
 let graceUntil = 0; // pause auto-trigger suppressed until relock settles
 let deathHandled = false;
 
@@ -96,7 +98,7 @@ export function createMenus() {
   bus.on("playerDied", onPlayerDied);
 }
 
-export function updateMenus() {
+export function updateMenus(dt = 1 / 60) {
   if (!created || !G.started || G.gameOver) return;
   // Settings modal is up: it owns the keyboard (Escape closes itself via a
   // capture-phase handler); don't toggle panels or auto-pause beneath it.
@@ -114,11 +116,16 @@ export function updateMenus() {
     if (activePanel === "bestiary") closePanel();
     else if (activePanel === null) openPanel("bestiary");
   }
+  if (Input.wasActionPressed("map") && !Input.isActionShared("map")) {
+    if (activePanel === "map") closePanel();
+    else if (activePanel === null) openPanel("map");
+  }
   if (Input.pressed("Escape")) {
     if (
       activePanel === "inventory" ||
       activePanel === "skills" ||
-      activePanel === "bestiary"
+      activePanel === "bestiary" ||
+      activePanel === "map"
     )
       closePanel();
     else if (activePanel === "pause") resume();
@@ -130,6 +137,8 @@ export function updateMenus() {
     // - Esc did nothing until the grace auto-pause fired.
     else showPause();
   }
+
+  if (activePanel === "map") updateExpandedMap(els.mapCanvas, dt);
 
   // Fallback: pointer lost without a lock-change callback (missed event,
   // OS-level focus steal). Only after the relock grace window has passed;
@@ -238,6 +247,12 @@ function openPanel(name) {
   if (name === "inventory") refreshInventory();
   else if (name === "skills") refreshSkills();
   else if (name === "bestiary") refreshBestiary();
+  else if (name === "map") {
+    renderExpandedMap(els.mapCanvas);
+    els.mapStatus.textContent = G.mapRevealed
+      ? "FRONTIER SURVEY COMPLETE"
+      : "FOCUS-SCAN A VANTAGE TO REVEAL THE FRONTIER";
+  }
   Input.unlockPointer();
   bus.emit("ui", { action: "open" });
 }
@@ -246,7 +261,8 @@ function closePanel() {
   if (
     activePanel !== "inventory" &&
     activePanel !== "skills" &&
-    activePanel !== "bestiary"
+    activePanel !== "bestiary" &&
+    activePanel !== "map"
   )
     return;
   const name = activePanel;
@@ -472,17 +488,36 @@ function buildDom() {
   setPanelHtml(
     start,
     `
-    <div class="iw-start-inner">
-      <div class="iw-title">IRONWILD</div>
-      <div class="iw-tagline">The machines remember.</div>
-      <div class="iw-controls">${CONTROLS.map(
-        ([k, a]) =>
-          `<div class="iw-ck">${k}</div><div class="iw-ca">${a}</div>`,
-      ).join("")}
+    <div class="iw-title-shell">
+      <div class="iw-title-topline">
+        <span>FRONTIER PROGRAM // VALLEY 07</span>
+        <span class="iw-live"><i></i> LIVE WORLD</span>
       </div>
-      ${canContinue ? '<button class="iw-btn" id="iw-continue">CONTINUE</button>' : ""}
-      ${canContinue ? '<button class="iw-btn" id="iw-newrun">NEW RUN</button>' : ""}
-      <div class="iw-clickbegin">CLICK TO BEGIN</div>
+      <div class="iw-title-hero">
+        <div class="iw-title-kicker">A MACHINE-HUNTING EXPEDITION</div>
+        <div class="iw-title">IRONWILD</div>
+        <div class="iw-tagline">The machines remember.</div>
+        <div class="iw-title-rule"><span></span></div>
+        <p class="iw-title-copy">Cross the reclaimed frontier. Read the machines. Take back what the wild buried.</p>
+      </div>
+      <div class="iw-title-lower">
+        <div class="iw-controls-panel">
+          <div class="iw-section-label">FIELD MANUAL <span>TACTICAL CONTROLS</span></div>
+          <div class="iw-controls">${CONTROLS.map(
+            ([k, a]) =>
+              `<div class="iw-control"><span class="iw-ck">${k}</span><span class="iw-ca">${a}</span></div>`,
+          ).join("")}
+          </div>
+        </div>
+        <div class="iw-launch-panel">
+          <div class="iw-launch-status"><span></span> EXPEDITION READY</div>
+          ${canContinue ? '<button class="iw-btn iw-primary" id="iw-continue">CONTINUE RUN</button>' : ""}
+          ${canContinue ? '<button class="iw-btn iw-secondary" id="iw-newrun">NEW EXPEDITION</button>' : ""}
+          <div class="iw-clickbegin">${canContinue ? "OR CLICK TO BEGIN A NEW RUN" : "CLICK TO BEGIN"}</div>
+          <div class="iw-launch-note">NO PATH IS SAFE TWICE</div>
+        </div>
+      </div>
+      <div class="iw-title-footer"><span>IRONWILD // SYSTEMS ONLINE</span><span>BUILD 0.1 // SURVIVE · HUNT · REMEMBER</span></div>
     </div>`,
   );
   document.body.appendChild(start);
@@ -638,6 +673,33 @@ function buildDom() {
     els.bestiaryLore[type] = card.querySelector(`[data-lore="${type}"]`);
   }
 
+  // WORLD MAP
+  const map = document.createElement("div");
+  map.className = "iw-screen hidden";
+  setPanelHtml(
+    map,
+    `
+    <div class="iw-panel iw-map-panel">
+      <div class="iw-panel-title">FRONTIER MAP</div>
+      <div class="iw-map-wrap">
+        <canvas id="iw-world-map" aria-label="World map"></canvas>
+        <div class="iw-map-legend">
+          <span><i class="iw-legend-dot iw-legend-player"></i>YOU</span>
+          <span><i class="iw-legend-dot iw-legend-quest"></i>CONTRACT</span>
+          <span><i class="iw-legend-dot iw-legend-expedition"></i>EXPEDITION</span>
+          <span><i class="iw-legend-dot iw-legend-landmark"></i>LANDMARK</span>
+          <span><i class="iw-legend-dot iw-legend-danger"></i>MACHINE</span>
+        </div>
+      </div>
+      <div class="iw-map-status">${G.mapRevealed ? "FRONTIER SURVEY COMPLETE" : "FOCUS-SCAN A VANTAGE TO REVEAL THE FRONTIER"}</div>
+      <div class="iw-hint">[M] or [ESC] to close · map pauses the hunt</div>
+    </div>`,
+  );
+  document.body.appendChild(map);
+  els.map = map;
+  els.mapCanvas = map.querySelector("#iw-world-map");
+  els.mapStatus = map.querySelector(".iw-map-status");
+
   // DEATH
   const death = document.createElement("div");
   death.className = "iw-death";
@@ -668,6 +730,21 @@ function injectStyles() {
   padding:28px 36px;display:flex;flex-direction:column;align-items:center;gap:12px;
   min-width:280px;}
 .iw-panel.iw-wide{min-width:520px;max-width:92vw;}
+.iw-map-panel{min-width:min(780px,92vw);max-width:92vw;}
+.iw-map-wrap{position:relative;width:min(720px,78vw);aspect-ratio:1;max-height:68vh;}
+#iw-world-map{display:block;width:100%;height:100%;image-rendering:auto;background:#061016;
+  box-shadow:0 0 0 1px rgba(89,227,255,.24),0 12px 34px rgba(0,0,0,.45);}
+.iw-map-legend{position:absolute;left:12px;bottom:12px;display:flex;flex-wrap:wrap;gap:8px 14px;
+  padding:7px 9px;background:rgba(4,7,10,.78);font-size:10px;letter-spacing:.08em;color:rgba(223,231,234,.78);}
+.iw-map-legend span{display:flex;align-items:center;gap:5px;}
+.iw-legend-dot{width:7px;height:7px;display:inline-block;border-radius:50%;}
+.iw-legend-player{background:#eef6f8;}
+.iw-legend-quest{background:#f2c14e;}
+.iw-legend-expedition{background:#59e3ff;}
+.iw-legend-landmark{background:#f1d58a;}
+.iw-legend-danger{background:#ff4d3d;}
+.iw-map-status{font-size:11px;letter-spacing:.15em;color:#59e3ff;}
+
 .iw-panel-title,.iw-title{letter-spacing:.35em;font-weight:700;}
 .iw-panel-title{font-size:18px;margin-bottom:6px;color:#eef6f8;}
 
@@ -751,6 +828,97 @@ function injectStyles() {
   text-shadow:0 0 30px rgba(160,20,20,.5);}
 .iw-death-sub{font-size:14px;font-style:italic;color:rgba(223,231,234,.6);
   letter-spacing:.12em;margin-bottom:10px;}
+/* Cinematic title surface: clear hierarchy, launch focus, and responsive field manual. */
+#iw-start {
+  cursor: pointer;
+  overflow: hidden;
+  background: radial-gradient(ellipse at 50% 35%, rgba(21,55,70,.28), transparent 48%), linear-gradient(180deg, rgba(2,8,17,.78), rgba(3,10,15,.52) 48%, rgba(2,8,10,.92));
+}
+#iw-start::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: .22;
+  background: linear-gradient(90deg, transparent 49.9%, rgba(89,227,255,.12) 50%, transparent 50.1%), repeating-linear-gradient(0deg, transparent 0 3px, rgba(255,255,255,.018) 4px);
+}
+#iw-start::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 140px rgba(0,0,0,.78), inset 0 -90px 150px rgba(0,0,0,.46);
+}
+.iw-title-shell {
+  position: relative;
+  z-index: 1;
+  width: min(1120px, 88vw);
+  min-height: min(650px, 88vh);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 24px 0 20px;
+}
+.iw-title-topline, .iw-title-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  color: rgba(223,231,234,.45);
+  font-size: 10px;
+  letter-spacing: .18em;
+}
+.iw-title-topline { border-bottom: 1px solid rgba(89,227,255,.18); padding-bottom: 12px; }
+.iw-title-footer { border-top: 1px solid rgba(255,255,255,.1); padding-top: 12px; font-size: 9px; }
+.iw-live { color: rgba(126,214,126,.72); }
+.iw-live i, .iw-launch-status span {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin: 0 7px 1px 0;
+  border-radius: 50%;
+  background: #7ed67e;
+  box-shadow: 0 0 10px #7ed67e;
+}
+.iw-title-hero { display: flex; flex-direction: column; align-items: center; text-align: center; margin: 15px 0 10px; }
+.iw-title-kicker { color: #59e3ff; font-size: 11px; letter-spacing: .38em; font-weight: 600; margin-bottom: 12px; }
+.iw-title { font-size: clamp(48px, 7vw, 88px); line-height: .95; letter-spacing: .08em; color: #eef6f8; text-shadow: 0 0 24px rgba(89,227,255,.28), 0 4px 30px rgba(0,0,0,.55); }
+.iw-tagline { font-size: 16px; font-style: italic; color: rgba(223,231,234,.68); letter-spacing: .16em; margin-top: 13px; }
+.iw-title-rule { width: 240px; height: 1px; background: rgba(89,227,255,.18); margin: 19px 0 13px; position: relative; }
+.iw-title-rule span { position: absolute; left: 50%; top: -2px; width: 5px; height: 5px; background: #59e3ff; transform: rotate(45deg); box-shadow: 0 0 12px #59e3ff; }
+.iw-title-copy { max-width: 430px; margin: 0; color: rgba(223,231,234,.56); font-size: 12px; line-height: 1.7; letter-spacing: .08em; }
+.iw-title-lower { display: grid; grid-template-columns: 1fr 300px; gap: 70px; align-items: end; }
+.iw-controls-panel { border-left: 1px solid rgba(89,227,255,.28); padding-left: 18px; }
+.iw-section-label { color: #59e3ff; font-size: 10px; letter-spacing: .25em; margin-bottom: 12px; }
+.iw-section-label span { color: rgba(223,231,234,.35); margin-left: 10px; letter-spacing: .12em; }
+#iw-start .iw-controls { display: grid; grid-template-columns: repeat(2, minmax(190px, 1fr)); gap: 7px 30px; margin-top: 0; font-size: 11px; }
+.iw-control { display: grid; grid-template-columns: 88px 1fr; gap: 10px; align-items: center; }
+#iw-start .iw-ck { text-align: left; color: #59e3ff; letter-spacing: .09em; font-weight: 700; white-space: nowrap; }
+#iw-start .iw-ca { color: rgba(223,231,234,.67); letter-spacing: .04em; white-space: nowrap; }
+.iw-launch-panel { border: 1px solid rgba(89,227,255,.22); background: rgba(4,13,19,.52); padding: 20px 22px 17px; display: flex; flex-direction: column; align-items: center; gap: 9px; box-shadow: 0 12px 35px rgba(0,0,0,.2); }
+.iw-launch-status { color: rgba(126,214,126,.75); font-size: 10px; letter-spacing: .18em; margin-bottom: 4px; }
+.iw-btn.iw-primary { width: 100%; background: rgba(89,227,255,.16); border-color: rgba(89,227,255,.72); font-weight: 700; }
+.iw-btn.iw-secondary { width: 100%; border-color: rgba(255,255,255,.2); font-size: 10px; padding: 7px 18px; }
+#iw-start .iw-clickbegin { margin-top: 8px; font-size: 11px; letter-spacing: .18em; color: rgba(238,246,248,.78); }
+.iw-launch-note { font-size: 9px; letter-spacing: .18em; color: rgba(223,231,234,.3); margin-top: 4px; }
+@media (max-width: 800px) {
+  .iw-title-shell { width: 88vw; min-height: 92vh; padding: 18px 0 14px; }
+  .iw-title-topline span:first-child, .iw-title-footer span:last-child { display: none; }
+  .iw-title-lower { grid-template-columns: 1fr; gap: 20px; align-items: stretch; }
+  .iw-controls-panel { order: 2; }
+  .iw-launch-panel { order: 1; }
+  #iw-start .iw-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 14px; font-size: 10px; }
+  .iw-control { grid-template-columns: 72px 1fr; gap: 6px; }
+  #iw-start .iw-ca { white-space: normal; }
+  .iw-title-copy { display: none; }
+  .iw-title-hero { margin: 12px 0 5px; }
+}
+@media (max-height: 650px) and (min-width: 801px) {
+  .iw-title-shell { min-height: 94vh; padding-top: 12px; padding-bottom: 10px; }
+  .iw-title-copy { display: none; }
+  .iw-title-rule { margin: 10px 0 7px; }
+  #iw-start .iw-controls { gap: 5px 24px; }
+  .iw-launch-panel { padding: 13px 18px 11px; }
+}
 `;
   document.head.appendChild(st);
 }

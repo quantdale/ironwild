@@ -38,6 +38,29 @@ test("KeyP quicksave -> reload -> Continue restores position", async ({
     .toBeGreaterThan(6);
   await page.keyboard.up("KeyW");
 
+  // Seed one active objective at the live player position so the save test
+  // checks the real plain-data persistence boundary, not only position data.
+  await page.evaluate(() => {
+    const G = window.__IW.G;
+    const p = G.player.pos;
+    G.expedition = {
+      active: {
+        id: 77,
+        type: "signal",
+        x: p.x,
+        z: p.z,
+        label: "Saved Relay",
+        radius: 3.2,
+        maxTime: 120,
+        timeLeft: 95,
+        progress: 0,
+      },
+      completed: 3,
+      nextId: 78,
+      cooldown: 0,
+    };
+  });
+
   await tapKey(page, "KeyP"); // manual quicksave (src/systems/save.js updateSave)
 
   await expect
@@ -52,6 +75,15 @@ test("KeyP quicksave -> reload -> Continue restores position", async ({
   );
   expect(Array.isArray(saved.pos)).toBe(true);
   expect(saved.v).toBeGreaterThanOrEqual(2);
+  expect(saved.expedition).toMatchObject({
+    completed: 3,
+    nextId: 78,
+    active: {
+      id: 77,
+      type: "signal",
+      label: "Saved Relay",
+    },
+  });
 
   // Fresh navigation: title screen must now offer CONTINUE (menus renders it
   // only when systems/save.js hasSave() is true at buildDom time).
@@ -78,4 +110,15 @@ test("KeyP quicksave -> reload -> Continue restores position", async ({
     dist(restored, { x: saved.pos[0], y: saved.pos[1], z: saved.pos[2] }),
   ).toBeLessThan(0.5);
   expect(dist(restored, spawnPos)).toBeGreaterThan(3); // really left spawn
+
+  const restoredExpedition = await page.evaluate(() => window.__IW.G.expedition);
+  expect(restoredExpedition).toMatchObject({
+    completed: 3,
+    nextId: 78,
+    active: {
+      id: 77,
+      type: "signal",
+      label: "Saved Relay",
+    },
+  });
 });

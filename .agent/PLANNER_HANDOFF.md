@@ -1,0 +1,5 @@
+# Planner → Executor Handoff
+
+Additive; stricter repository rules win. The planner writes `.agent/EXECUTION_PROMPT.md` only after auditing actual code, tests, docs, recent commits/diffs, useful issues/PRs, and native state. It must contain Status, Planned-From, target branch, one high-impact campaign, scope, ordered workstreams, constraints, validation, acceptance/completion gates, and Git/reporting requirements; then commit/push and stop without implementing.
+
+For `/goal continue`: read repository instructions, this file, the execution prompt if present, and native campaign/state files; reconcile against current Git/implementation; resume the first genuinely incomplete requirement of an ACTIVE prompt, without redoing landed work; validate, fix introduced Critical/High regressions, update state, and commit/push per local policy. Otherwise fall back to native continuation semantics; if none exists, report that planning is required.

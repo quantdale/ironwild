@@ -16,6 +16,7 @@
 
 import * as THREE from 'three';
 import { G } from '../core/state.js';
+import { acquire as acquireAsset, release as releaseAsset } from '../systems/assets.js';
 import { createAnimGraph } from './graph.js';
 import {
   attachEvents, attachAttackWindows, activeWindowProgress, parseClipName,
@@ -91,6 +92,8 @@ function installAuthored(machine, animator, inst) {
   animator.graph = graph;
   animator.root = root;
   animator.mode = 'authored';
+  acquireAsset(machine.assetId);
+  animator._assetAcquired = true;
   return true;
 }
 
@@ -127,6 +130,7 @@ export function attachMachineAnimator(machine, opts = {}) {
     _eventCtl: null,         // timeline controller of the live authored attack
     _lastAction: null,       // live attack action (for attackProgress())
     _disposed: false,        // set by dispose(); tickers must skip finalized animators
+    _assetAcquired: false,   // cache ref held by an installed authored clone
 
     /**
      * Report desired locomotion speed. Procedural path: metadata only - ai.js
@@ -213,6 +217,10 @@ export function attachMachineAnimator(machine, opts = {}) {
       // disposed animator can never be ticked again even if a stale reference
       // lingers in some machine record.
       animator._disposed = true;
+      if (animator._assetAcquired && animator.assetId) {
+        releaseAsset(animator.assetId);
+        animator._assetAcquired = false;
+      }
       if (animator.graph) {
         animator.graph.dispose();
         if (animator.root) animator.root.removeFromParent();
@@ -234,7 +242,7 @@ export function attachMachineAnimator(machine, opts = {}) {
     try {
       Promise.resolve(assets.instantiate(machine.assetId, opts.assetOpts || {}))
         .then((inst) => {
-          if (machine._disposed) return; // died before assets landed
+          if (animator._disposed || machine._disposed) return;
           installAuthored(machine, animator, inst); // false -> silently stay procedural
         })
         .catch((err) => console.error('[anim] authored rig failed, staying procedural:', err));

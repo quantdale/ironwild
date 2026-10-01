@@ -43,11 +43,14 @@ export const bus = {
 //   'playerDied'   {}
 //   'pickup'       { type:string, amount:number }           - resource collected
 //   'notify'       { text:string, tone?:'info'|'good'|'bad' } - HUD toast
-//   'prompt'       { text:string|null }                     - interaction prompt shown/hidden
+//   'prompt'       { text:string|null, source?:string, priority?:number } - interaction claim
 //   'hitMarker'    { weak:boolean }
 //   'ui'           { action:string }                        - ui click / open / close sounds
 //   'craft'        { item:string }
 //   'skillUp'      { id:string }
+//   'expeditionStarted'   { event }                         - frontier objective created
+//   'expeditionCompleted' { event, reward }                 - frontier objective claimed
+//   'expeditionExpired'   { event }                         - frontier objective timed out
 // v2 additions:
 //   'machineScanned' { machine }                        - focus-scanned a machine (Vantage rewards)
 //   'camShake'       { amp:number, time?:number }       - camera.js applies impact shake
