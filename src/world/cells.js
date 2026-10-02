@@ -20,8 +20,10 @@
 // Records start VISIBLE on register: until the first updateCells() call the
 // world renders exactly like the pre-streaming build (title screen included,
 // since updateProps - and thus updateCells - only runs in the gameplay branch).
-// The first streamed update adopts streaming mode gradually through the same
-// hysteresis band, so there is no one-frame all-hidden flash at adoption.
+// On the first streamed pass every cell is judged against the entry radius and
+// a `streamed` flag is latched, so out-of-band cells are hidden immediately;
+// there is no one-frame all-hidden flash because adoption only flips cells
+// that were never in band, and in-band cells simply stay shown.
 
 // ---- tuning ---------------------------------------------------------------
 
@@ -71,6 +73,7 @@ function makeCell(key) {
     records: [],
     active: false,     // cell-level state machine (band logic in updateCells)
     approached: false, // prefetch latch for this visit
+    streamed: false,   // true once evaluated against a valid anchor
   };
 }
 
@@ -198,7 +201,18 @@ export function updateCells(pos, _dt) {
     // Visibility band: enter at 2 cells, leave past 2.6. The gap between the
     // thresholds is the hysteresis that stops boundary flicker while strafing
     // a cell edge. Rect distance keeps every point within ACTIVE_DIST shown.
-    if (cell.active) {
+    if (!cell.streamed) {
+      // First evaluation uses the entry radius only: a never-activated cell
+      // out of band must be hidden right now, not stay visible forever.
+      cell.streamed = true;
+      if (d2 <= active2) {
+        cell.active = true;
+        for (const r of cell.records) if (!r.retired) setRecordShown(r, true);
+      } else {
+        cell.active = false;
+        for (const r of cell.records) if (!r.retired) setRecordShown(r, false);
+      }
+    } else if (cell.active) {
       if (d2 > deact2) {
         cell.active = false;
         for (const r of cell.records) if (!r.retired) setRecordShown(r, false);

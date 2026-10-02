@@ -1,0 +1,9 @@
+[renderer] ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver) | vendor=Google Inc. (Google) | SOFTWARE-GL (SwiftShader): correctness/lifecycle numbers only
+scenario                 p50/p95/p99 fps | calls tris geo tex prog | heapMB machines arrows cells dynres
+A: meadow                {"p50":250,"p95":250,"p99":250,"fps":4,"calls":737,"tris":511239,"geo":139,"tex":26,"prog":40,"heapMB":24.7955322265625,"machines":17,"arrows":40,"cells":"80/279","dynres":1}
+B: storm                 {"p50":250,"p95":250,"p99":250,"fps":4,"calls":738,"tris":511239,"geo":140,"tex":26,"prog":41,"heapMB":24.7955322265625,"machines":17,"arrows":40,"cells":"80/279","dynres":1}
+combat teleport: true
+C: combat proximity      {"p50":250,"p95":250,"p99":250,"fps":4,"calls":885,"tris":582875,"geo":141,"tex":26,"prog":41,"heapMB":24.7955322265625,"machines":17,"arrows":40,"cells":"94/279","dynres":1}
+D: timeScale 0.35        {"p50":250,"p95":250,"p99":250,"fps":4,"calls":941,"tris":614051,"geo":141,"tex":26,"prog":41,"heapMB":24.7955322265625,"machines":17,"arrows":40,"cells":"94/279","dynres":1}
+E: dense forest          {"p50":250,"p95":250,"p99":250,"fps":4,"calls":481,"tris":607127,"geo":141,"tex":26,"prog":41,"heapMB":24.7955322265625,"machines":17,"arrows":40,"cells":"111/279","dynres":1}
+done
