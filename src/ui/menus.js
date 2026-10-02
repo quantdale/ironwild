@@ -455,6 +455,20 @@ function saveAvailable() {
   }
 }
 
+/**
+ * True when the slot holds a restorable (live) run. A finished run keeps its
+ * slot but must not offer CONTINUE - permadeath lives in save.js's data, and
+ * this gate only reflects it. Defensive like saveAvailable().
+ */
+function restorableRunAvailable() {
+  if (typeof save.hasRestorableRun !== "function") return false;
+  try {
+    return !!save.hasRestorableRun();
+  } catch (err) {
+    return false;
+  }
+}
+
 /** Small settings gear button pinned bottom-right of a full-screen panel. */
 function appendGear(parent) {
   const gear = document.createElement("button");
@@ -484,7 +498,8 @@ function buildDom() {
   const start = document.createElement("div");
   start.className = "iw-screen";
   start.id = "iw-start";
-  const canContinue = saveAvailable();
+  const canContinue = restorableRunAvailable();
+  const hasSlot = saveAvailable();
   setPanelHtml(
     start,
     `
@@ -512,7 +527,7 @@ function buildDom() {
         <div class="iw-launch-panel">
           <div class="iw-launch-status"><span></span> EXPEDITION READY</div>
           ${canContinue ? '<button class="iw-btn iw-primary" id="iw-continue">CONTINUE RUN</button>' : ""}
-          ${canContinue ? '<button class="iw-btn iw-secondary" id="iw-newrun">NEW EXPEDITION</button>' : ""}
+          ${hasSlot ? '<button class="iw-btn iw-secondary" id="iw-newrun">NEW EXPEDITION</button>' : ""}
           <div class="iw-clickbegin">${canContinue ? "OR CLICK TO BEGIN A NEW RUN" : "CLICK TO BEGIN"}</div>
           <div class="iw-launch-note">NO PATH IS SAFE TWICE</div>
         </div>

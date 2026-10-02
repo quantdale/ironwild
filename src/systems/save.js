@@ -2,9 +2,24 @@
 // Serializes player pos/vitals, inventory (incl. fire arrows), skills, time of
 // day, map reveal, quest slots, XP/level and the bestiary; machines are never
 // saved (they respawn fresh on load). initSave() wires the panel-open save
-// hook; updateSave(dt) polls KeyP quicksave + the 90 s autosave timer and
-// snapshots on pause. loadGame() accepts any save version >= 2 - newer fields
-// are additive and simply fall back to the fresh-boot defaults when absent.
+// hook and the run-lifecycle transition; updateSave(dt) polls KeyP quicksave
+// + the 90 s autosave timer and snapshots on pause. loadGame() accepts any
+// save version >= 2 - newer fields are additive and simply fall back to the
+// fresh-boot defaults when absent.
+//
+// Run lifecycle (permadeath): a run is LIVE while the player is alive and
+// ENDED once they die. Death writes the run's final snapshot with an additive
+// marker - run: { ended: true, endedAt } - directly to the slot (not through
+// saveGame(), which refuses to write after death). The marker is the source
+// of truth: hasSave() answers only "is a slot present", while
+// hasRestorableRun() answers "may this run be restored" (slot exists, parses,
+// and does not carry run.ended === true). loadGame() refuses ended runs too,
+// so the permadeath rule holds even if the title-screen gate is bypassed.
+// Saves from before this marker have no `run` field and stay restorable; any
+// malformed `run` value is treated as "not ended" so a corrupt field can
+// never brick a live run. If the mark write fails (storage unavailable /
+// unparsable slot), clearSave() is the fallback so a finished run is never
+// left restorable - the death flow itself must never throw.
 
 import { bus } from '../core/events.js';
 import { G, CONFIG } from '../core/state.js';
@@ -28,6 +43,7 @@ const KNOWN_BESTIARY_TYPES = new Set([
 let inited = false;
 let autosaveT = 0;      // seconds since last save (counts while playing)
 let wasPaused = false;  // rising edge of G.paused -> snapshot progress
+let runEnded = false;   // session-local: true once this run's death was marked
 
 function finiteNumber(value, fallback) {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
@@ -65,6 +81,32 @@ export function hasSave() {
   }
 }
 
+/**
+ * True only when the slot holds a run that may be restored: it exists, parses,
+ * and does not carry run.ended === true. Any missing, non-boolean, or malformed
+ * `run` value counts as "not ended" - a corrupt marker must never brick a live
+ * run. Distinct from hasSave() on purpose: hasSave() is slot presence only.
+ */
+export function hasRestorableRun() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+    return !!data && typeof data === 'object' && !isRunEnded(data);
+  } catch (err) {
+    return false;
+  }
+}
+
+/**
+ * Strict end check: only run.ended === true ends a run. Missing, partial, or
+ * malformed `run` values (string/number/null/...) are treated as not ended.
+ */
+function isRunEnded(data) {
+  const run = data && typeof data === 'object' ? data.run : null;
+  return !!run && typeof run === 'object' && run.ended === true;
+}
+
 /** Plain-data snapshot of everything we persist. Quest slots are pure data. */
 function serialize() {
   const p = G.player;
@@ -94,7 +136,7 @@ function serialize() {
  * Emits 'gameSaved' {manual}; a manual save also toasts. Returns success.
  */
 export function saveGame(manual = false) {
-  if (!G.started || G.gameOver || !G.player) return false;
+  if (!G.started || G.gameOver || !G.player || runEnded) return false;
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(serialize()));
   } catch (err) {
@@ -123,6 +165,10 @@ export function loadGame() {
     console.error('[save] read failed:', err);
     return false;
   }
+  // Run lifecycle: a finished run is never restorable. Checked before any G
+  // mutation, and strictly on run.ended === true (malformed markers are
+  // treated as "not ended" so a corrupt field cannot brick a live run).
+  if (isRunEnded(data)) return false;
   // Accept any prior save shape (2 or 3): fields absent from older saves are
   // additive and simply keep whatever createXxx() already defaulted on G.
   // pos needs length/finiteness/magnitude checks - Vector3.set would happily
@@ -187,6 +233,9 @@ export function loadGame() {
     }
   }
   G.expedition = normalizeExpeditionState(data.expedition);
+  // A successful restore means the run is live (ended runs were rejected
+  // above), so re-arm the session's save triggers for it.
+  runEnded = false;
   return true;
 }
 
@@ -197,16 +246,65 @@ export function clearSave() {
   } catch (err) { /* storage unavailable */ }
 }
 
+/**
+ * Mark the current run as ended and write the final snapshot to the slot.
+ * Composes the payload itself (serialize() + the run marker) rather than
+ * calling saveGame(), which refuses to write once G.gameOver is set - so this
+ * write cannot be skipped by that guard. Failure-safe: a throwing write or an
+ * unparsable slot falls back to clearSave() so a finished run is never left
+ * restorable, and nothing is ever thrown into the death flow.
+ */
+function markRunEnded() {
+  // Exactly once per session: further emissions must neither rewrite the slot
+  // (a later snapshot would carry live state) nor throw. The reload after
+  // death boots a fresh module, so a new run re-arms this naturally.
+  if (runEnded) return;
+  runEnded = true;
+  let payload;
+  try {
+    payload = serialize();
+    payload.run = { ended: true, endedAt: finiteNumber(G.elapsed, 0) };
+  } catch (err) {
+    console.error('[save] run-end snapshot failed:', err);
+    clearSave();
+    return;
+  }
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(payload));
+  } catch (err) {
+    console.error('[save] run-end write failed:', err);
+    clearSave();
+    return;
+  }
+  // The slot must now PARSE as an ended run. If it does not (storage silently
+  // dropped/changed the write), a pre-death snapshot could still be sitting
+  // there restorable - clear instead so death always ends the run's save.
+  try {
+    const check = JSON.parse(localStorage.getItem(SAVE_KEY) || '');
+    if (!isRunEnded(check)) clearSave();
+  } catch (err) {
+    clearSave();
+  }
+}
+
 /** Subscribe persistence hooks. Call once during boot. */
 export function initSave() {
   if (inited) return;
   inited = true;
   // Opening a panel (inventory/skills/settings) snapshots progress. v1 menus
-  // emit action 'open'; v2 panels may use 'open-panel' - accept both.
+  // emit action 'open'; v2 panels may use 'open-panel' - accept both. After
+  // death, saveGame() itself no-ops (G.gameOver), so this stays harmless.
   bus.on('ui', (e) => {
     const a = e && e.action;
     if (a === 'open' || a === 'open-panel') saveGame(false);
   });
+  // Run lifecycle: death permanently ends the run's save. Ordering dependency
+  // (src/main.js frame loop): playerDied is emitted synchronously during the
+  // sim step (player.takeDamage) while the per-frame save tick runs later in
+  // the same frame, gated on !G.gameOver - so this mark is written before any
+  // later save could occur, and no save trigger rewrites the ended run. Task
+  // 2.3: keep this handler before any save-tick work in the frame.
+  bus.on('playerDied', markRunEnded);
 }
 
 /**

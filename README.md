@@ -35,7 +35,8 @@ should not be interpreted as a touch-control or mobile-gameplay certification.
 
 You are a hunter in a valley reclaimed by wilderness and patrolled by animal-like
 machines. Hunt them, break their glowing weak points, harvest resources, craft, and
-grow your skills. Death is permanent per run — restart and try again.
+grow your skills. Death is permanent per run: dying ends that run's save, and the
+next start begins a new run.
 
 | Input | Action |
 |---|---|
