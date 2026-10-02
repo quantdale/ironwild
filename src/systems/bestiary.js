@@ -1,9 +1,10 @@
 // IRONWILD - bestiary / kill-journal (v4). Tracks two states per machine
-// species: 'seen' (focus-scanned or fought at least once) and 'killed' (at
-// least one confirmed kill). Pure data lives on G.bestiary[type]; ui/menus.js
-// renders the [B] panel from it, systems/save.js persists it. Lore blurbs are
-// revealed on first kill, matching the "the machines remember" framing - the
-// player is the one doing the remembering.
+// species: 'seen' (focus-scanned or damaged in combat at least once) and
+// 'killed' (at least one confirmed kill). Pure data lives on
+// G.bestiary[type]; ui/menus.js renders the [B] panel from it,
+// systems/save.js persists it. Lore blurbs are revealed on first kill,
+// matching the "the machines remember" framing - the player is the one doing
+// the remembering.
 
 import { bus } from '../core/events.js';
 import { G } from '../core/state.js';
@@ -46,6 +47,10 @@ function ensureEntry(type) {
 function markSeen(type) {
   if (!NAMES[type]) return;
   const e = ensureEntry(type);
+  // This early-return is the once-only guarantee for the reveal announcement:
+  // however discovery arrives (scan, combat damage, or the kill path setting
+  // seen=true in markKilled), the notify + bestiaryUnlock pair fires exactly
+  // once per species.
   if (e.seen) return;
   e.seen = true;
   bus.emit('notify', { text: `Bestiary: ${NAMES[type]} observed`, tone: 'good' });
@@ -67,6 +72,16 @@ function onScanned(e) {
   if (m) markSeen(m.type);
 }
 
+// Combat discovery: a machine the player damaged becomes "seen". The guard in
+// markSeen (if (e.seen) return) is what keeps the reveal notification
+// single-shot - repeated hits on the same species announce exactly once. The
+// 'machine' check here covers malformed payloads; unlisted types are ignored
+// by markSeen's NAMES guard (no entry is created).
+function onHit(e) {
+  const m = e && e.machine;
+  if (m) markSeen(m.type);
+}
+
 function onDied(e) {
   const m = e && e.machine;
   if (m) markKilled(m.type);
@@ -83,11 +98,12 @@ export function speciesLore(type) {
   return e && e.killed ? LORE[type] || '' : '';
 }
 
-/** Subscribe scan/kill tracking and seed every species as undiscovered. */
+/** Subscribe scan/hit/kill tracking and seed every species as undiscovered. */
 export function createBestiary() {
   if (inited) return;
   inited = true;
   for (const type of SPECIES) ensureEntry(type);
   bus.on('machineScanned', onScanned);
+  bus.on('machineHit', onHit);
   bus.on('machineDied', onDied);
 }

@@ -137,6 +137,12 @@ Income:
 | Level-up (v3) | +1 SP | `xp.js:62` |
 | XP | kills 20/30/45/80/60/70/55/500 (alpha ×1.5), pickup +5, scan +15 | `xp.js:11-23` |
 
+Bestiary discovery note (`bestiary.js`, fix-bestiary-discovery): damaging a machine in combat
+reveals its bestiary entry, but that discovery pays **nothing** from this table — no map
+reveal, no skill points, no scan XP. The map-reveal + 2 SP and the +15 scan XP above remain
+strictly `machineScanned` (Vantage focus-scan) rewards; combat's only economy remains the
+kill XP/loot rows.
+
 Costs / sinks (`menus.js:203-237`, `state.js:72-82`):
 
 | Craft | Cost | Output |
