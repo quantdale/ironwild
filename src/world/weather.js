@@ -182,7 +182,17 @@ function strike() {
   const sz = _p.z + Math.sin(ang) * dist;
 
   // Screen flash: peak now, exponential ~120 ms fade handled in update.
-  flashLevel = randRange(rng, 0.5, 0.85);
+  // Reduced flashing (a11y 'reduceFlashing') caps the peak at 0.15..0.3
+  // instead of 0.5..0.85: the strike is still perceptible (reduced, not
+  // removed) but no longer strobes full-screen white. Read once per strike -
+  // never per frame - and guard the settings object because weather inits
+  // very early in boot. The flash-light spike below is scene lighting, not a
+  // screen flash, so it stays unchanged. Same deterministic rng call either
+  // way: only the range changes, so strike geometry/distance stay identical.
+  const reduceFlashing = !!(G.settings && G.settings.reduceFlashing);
+  flashLevel = reduceFlashing
+    ? randRange(rng, 0.15, 0.3)
+    : randRange(rng, 0.5, 0.85);
 
   // Flash light shines from the bolt's bearing down onto the player.
   const gy = Math.max(heightAt(sx, sz), CONFIG.waterLevel);

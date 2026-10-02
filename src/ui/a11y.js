@@ -1,16 +1,25 @@
 // IRONWILD - accessibility runtime (Wave J).
 // Applies the a11y settings owned by ui/settings.js to the DOM and exposes
-// them for consumers: --iw-ui-scale custom property on <html> (uiScale),
-// 'iw-high-contrast' body class (highContrastCues), and window.__IW_A11Y =
+// them for consumers. Body classes driven here:
+//   - 'iw-high-contrast' (highContrastCues): thicker achromatic weak-point/
+//     reticle cues in ui/hud.js.
+//   - 'iw-reduce-flashing' (reduceFlashing): disables the CSS-animated flashing
+//     layers in ui/hud.js injectStyles() (low-hp vignette pulse #iw-vig,
+//     grain translation #iw-grain, xp-bar pulse #iw-xpbar.pulse, contract-done
+//     flash .iw-qslot.done) while keeping their static forms; the imperative
+//     weather lightning flash reads the setting directly in world/weather.js.
+// Also publishes --iw-ui-scale on <html> (uiScale) and window.__IW_A11Y =
 // { camShakeScale, reduceFlashing, highContrast, uiScale } per the Perf-HUD
-// publishing convention. The integrator patches the actual shake/flash sources
-// (camera.js impact shake, HUD flash overlays) to read these; this module only
-// publishes state and never crashes on missing settings or DOM.
+// publishing convention. shake/flash consumers (camera.js impact shake,
+// world/weather.js lightning) read these; this module only publishes state
+// and never crashes on missing settings or DOM.
 
 import { bus } from '../core/events.js';
 import { G } from '../core/state.js';
 
 // Settings keys that re-trigger apply(); mirrors ui/settings.js ownership.
+// 'reduceFlashing' drives the 'iw-reduce-flashing' body class below (and the
+// weather flash clamp, which reads G.settings at strike time).
 const WATCHED_KEYS = new Set([
   'camShakeScale', 'reduceFlashing', 'uiScale', 'highContrastCues',
 ]);
@@ -42,6 +51,7 @@ function apply() {
     document.documentElement.style.setProperty('--iw-ui-scale', String(current.uiScale));
     if (document.body) {
       document.body.classList.toggle('iw-high-contrast', current.highContrast);
+      document.body.classList.toggle('iw-reduce-flashing', current.reduceFlashing);
     }
     // Fresh object per publish so consumers can diff by identity safely.
     window.__IW_A11Y = { ...current };

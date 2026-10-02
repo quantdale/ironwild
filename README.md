@@ -103,7 +103,10 @@ Arrows fly on a real ballistic arc — lead your targets and aim above for dista
   up at spawn — compounds with the Alpha variant roll for a harder run.
 - **Accessibility**: a colorblind-safe weak-point cue (settings) draws a small pulsing
   white-on-black reticle over every unbroken weak point in range, all the time — not just
-  during a focus scan, and independent of the glow color.
+  during a focus scan, and independent of the glow color. A **Reduce Flashing** toggle
+  (settings) stops the low-health vignette pulse, the animated film grain, the XP-bar
+  flash, and the storm lightning strobe — the low-health warning stays visible as a steady
+  overlay and the grain/vignette textures remain as still layers.
 - **Save system**: autosave + P quicksave; Continue or NEW RUN (wipes the save) from the
   title screen. XP/level and the
   bestiary persist too; saves from earlier versions still load (missing fields default fresh).
