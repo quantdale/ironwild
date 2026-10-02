@@ -20,8 +20,13 @@
 // Records start VISIBLE on register: until the first updateCells() call the
 // world renders exactly like the pre-streaming build (title screen included,
 // since updateProps - and thus updateCells - only runs in the gameplay branch).
-// The first streamed update adopts streaming mode gradually through the same
-// hysteresis band, so there is no one-frame all-hidden flash at adoption.
+// The first pass that has a valid anchor is authoritative per cell: a cell the
+// player is not inside the activation band of hides on that very first
+// evaluation (each cell's `streamed` flag distinguishes "never judged" from
+// "judged and hidden", and a record registered into an already-hidden cell is
+// shown-then-hidden in the same call so the band agreement never lapses), so
+// there is no one-frame all-hidden flash at adoption AND no far cell can stay
+// visible forever just because the player never walked into it.
 
 // ---- tuning ---------------------------------------------------------------
 
@@ -70,6 +75,7 @@ function makeCell(key) {
     minZ: cz * CELL_SIZE,
     records: [],
     active: false,     // cell-level state machine (band logic in updateCells)
+    streamed: false,   // judged against a valid anchor at least once
     approached: false, // prefetch latch for this visit
   };
 }
@@ -159,7 +165,13 @@ export function register(cellKey, record) {
   }
   cell.records.push(rec);
   totalRegistered++;
+  // Pre-adoption parity: records join SHOWN (see header). Once the cell has
+  // been judged out of band, though, the record joins it hidden in the same
+  // call - through the same idempotent helper - so the shown counters and
+  // group.visible agree at all times and a late registrant can never flash
+  // for a frame while its cell is asleep.
   setRecordShown(rec, true);
+  if (cell.streamed && !cell.active) setRecordShown(rec, false);
   return rec;
 }
 
@@ -198,15 +210,20 @@ export function updateCells(pos, _dt) {
     // Visibility band: enter at 2 cells, leave past 2.6. The gap between the
     // thresholds is the hysteresis that stops boundary flicker while strafing
     // a cell edge. Rect distance keeps every point within ACTIVE_DIST shown.
-    if (cell.active) {
-      if (d2 > deact2) {
-        cell.active = false;
-        for (const r of cell.records) if (!r.retired) setRecordShown(r, false);
-      }
-    } else if (d2 <= active2) {
-      cell.active = true;
-      for (const r of cell.records) if (!r.retired) setRecordShown(r, true);
-    }
+    // Visibility is recomputed from the band for EVERY cell on EVERY pass and
+    // applied through the idempotent setRecordShown() - never gated on the
+    // cell's prior state - so a cell the player never entered hides on its
+    // first streamed pass instead of lingering visible forever (the old code
+    // could only hide cells it had first seen become active). The hysteresis
+    // lives in the state-dependent threshold only: an active cell keeps its
+    // band until past DEACT, an inactive one re-enters only within ACTIVE.
+    const wantActive = cell.active ? d2 <= deact2 : d2 <= active2;
+    if (cell.active !== wantActive) cell.active = wantActive;
+    for (const r of cell.records) if (!r.retired) setRecordShown(r, wantActive);
+    // First pass with a valid anchor is authoritative for this cell: from now
+    // on "out of band" means hidden (see header), while anything not yet
+    // streamed keeps its pre-adoption visible default until it is judged.
+    cell.streamed = true;
 
     // Shadow-caster budget: batches registered with a shadowRadius cast only
     // inside that ring (exit hysteresis 1.18x). Hidden cells keep whatever
