@@ -30,7 +30,7 @@ and `populateWorld()` deals 17 machines: skitter ×3, bramblehorn ×3, rendclaw 
 
 Runtime probe (production build, after start): `G.machines.length === 17`, allocated `#iw-dots .iw-dot` elements `=== 14`.
 
-Consequence: an aggro machine at index ≥14 never gets a directional indicator. `CONFIG.maxMachines` is documented in `core/state.js` as a tuning constant ("v1: maxMachines") and is used as *the* cap by HUD and minimap dot pools, while the AI derives a larger cap locally. Two sources of truth for one concept.
+Consequence: at most 14 aggro machines receive dots, in roster order. A machine at index 16 still gets a dot when fewer than 14 earlier machines are aggro. The defect is simultaneous-aggro overflow, not a permanent skip of every machine past index 13. `CONFIG.maxMachines` is a v1 tuning constant. The AI derives a larger local cap, and the HUD pool follows the smaller constant. Minimap dots are drawn from the live roster rather than this pool; do not describe the minimap as sharing the 14-dot cap unless a fresh read shows that it does.
 
 ### Finding 2 — percentiles are computed from pre-clamped samples
 
@@ -84,13 +84,18 @@ Introduce the real cap as the single source of truth. `ai.js` already keeps it l
 
 For the dot pool, additionally make it **self-growing**: if `updateDots` finds more aggro machines than allocated elements, append new elements. That removes the "silently drop" failure mode permanently, so a future population change cannot silently regress the HUD again. A 17-element cache is trivial; a `CONFIG` cap alone would be a soft guarantee.
 
-### 2. Exclude gap samples instead of truncating them
+### 2. Store hitch samples; exclude only non-frames
 
-Match `dynres.js`: if `dt * 1000` exceeds a gap threshold, do **not** push it into the ring, reset or advance an exclusion counter, and continue. Keep a separate counter (`excludedFrames`) surfaced in the report and the HUD, so a capture that dropped 40 frames after a tab switch says so.
+Do not copy `dynres.js`'s 250 ms cutoff into the percentile ring. `updateDynRes()` drops deltas above 0.25 s because one such sample poisons its short controller average. `debugFeed()` still clamps to that ceiling. Telemetry has the opposite job: a 900 ms rendered hitch must remain visible in p99. Using 250 ms as the telemetry exclusion line would make task and spec disagree, and would keep the tail invisible.
 
-Threshold choice: reuse the same value as `dynres.js` (`DT_CLAMP_S = 0.25`) so the two subsystems agree on what "a gap" means. A genuine 250 ms hitch is already unplayable and is exactly what we want to *see*, so the gap threshold must stay well above any playable frame: 250 ms is 15× a 16.7 ms frame, which is a defensible line.
+Policy:
 
-The ring itself keeps its `RING_CAP`; no allocation change.
+- Finite positive samples at or below `GAP_MS` (2000) are stored at their true duration. A 900 ms frame is stored as 900.
+- Samples above 2000 ms, non-finite samples, and non-positive samples are not stored. Increment `excludedFrames`.
+- A hidden-tab resume is a gap even if some future caller clamps it first. Prefer excluding `document.hidden` resumes at the caller when that signal is available; the 2000 ms ceiling is the backstop when only a raw delta arrives.
+- Do not write the excluded value into the ring as 250, 900, or 2000.
+
+The ring keeps `RING_CAP`. `dynres.js` is unchanged by this policy.
 
 ### 3. Count live entities, expose capacity separately
 
@@ -111,8 +116,8 @@ Use the `hasGpuInfo` flag that already exists: when false, `paintHud()` prints `
 ```text
 frame: clock.getDelta() -> rawDt
   -> perfStep(unclampedDelta)
-       dt*1000 <= GAP_MS ?  push into ring (unclamped value)
-                        :  excludedFrames++, no push
+       finite && 0 < dt*1000 <= 2000 ?  push true duration into ring
+                                    :  excludedFrames++, no push
   -> every 250 ms : recomputeFrameStats() over ring
   -> every 1 s    : captureRendererInfo(), captureHeap(), captureSceneSnapshot()
                       arrows = count of G.arrows where alive   (throttled)
@@ -138,7 +143,8 @@ G.machines.length (== CONFIG max) -> hud dot pool self-grows if needed
 
 ## Alternatives considered
 
-- **Keep the clamp but surface it** (e.g. report `p99Clamped: true`). Rejected: it keeps a permanently-saturated metric and still cannot detect tail regressions; dropping the sample is both simpler and strictly more informative.
+- **Keep the clamp but surface it** (e.g. report `p99Clamped: true`). Rejected: it keeps a permanently-saturated metric.
+- **Exclude every sample above 250 ms.** Rejected: that is the dynres controller policy, and it would drop the 900 ms hitch this metric must report. Telemetry excludes only non-frames and deltas above 2000 ms.
 - **Change the dot pool to a fixed large number (e.g. 64).** Rejected as a band-aid: it hides the two-sources-of-truth problem, which is what actually caused the bug. Self-growing elements plus a single cap fixes both.
 - **Move the live-arrow count into `projectiles.js`.** Rejected for now (see above); note it as the natural home if a hot path ever needs the count per frame.
 - **Rewrite the whole telemetry module.** Rejected: the module is well-structured (ring buffer, lazy percentiles, allocation-free marks) and the defects are three small, local ones.
@@ -151,17 +157,17 @@ G.machines.length (== CONFIG max) -> hud dot pool self-grows if needed
 ## Testing strategy
 
 - Unit (`tests/unit/perf-dynres.test.js`, existing harness):
-  - a sample above the gap threshold is not pushed into the ring and increments `excludedFrames`;
-  - a 900 ms frame (no longer representable) yields a p99 equal to 900, not 250;
+  - a 900 ms frame is stored and yields a p99 of 900, not 250;
+  - a sample above 2000 ms is not pushed into the ring and increments `excludedFrames`;
   - `report.scene.arrows` is 0 with an untouched pool, 1 after one `spawnArrow`, 0 again after the arrow resolves;
   - `hasGpuInfo === false` when `renderer.info` is absent, and the report's gpu fields are null rather than stale numbers;
   - a NaN frame is treated as excluded, not stored.
 - Unit for the cap agreement: assert `CONFIG`'s world machine cap equals the value `ai.js` uses for `MACH_CAP`, so the two cannot drift again (a cheap "single source of truth" lock).
 - HUD: assert the dot pool grows to cover N aggro machines for N above the previous 14, and that surplus elements are hidden when machines go calm.
 - E2E (`tests/e2e/telemetry.spec.js`): assert `getReport().scene.arrows === 0` on a fresh run (this alone would have caught the pool-size bug), and that the F3 HUD text contains no `0` draw-call figure when renderer info is unavailable.
-- Tooling: re-run `node scripts/perf-capture.mjs` and confirm the new baseline's p99 is not equal to the gap threshold, and that the five scenarios now differ in `arrows`.
+- Tooling: re-run `node scripts/perf-capture.mjs` and confirm the new baseline's p99 is not pinned to 250, and that the five scenarios now differ in `arrows`.
 
 ## Risks
 
 - Changing the meaning of `report.scene.arrows` silently invalidates any external dashboard reading it. Mitigation: ship the new field name (`arrowsPool`) alongside, and call the semantics change out explicitly in the change notes and the regenerated baseline header.
-- Excluding samples could hide a real problem if the gap threshold is too low (a genuine 260 ms hitch would be dropped). Mitigation: `excludedFrames` is reported, and a sustained pattern of exclusions is itself a signal — document that in `PERFORMANCE_BUDGETS.md`.
+- A 2000 ms ceiling can still hide a multi-second rendered stall. That is accepted: those deltas are indistinguishable from tab-resume gaps without a hidden-tab signal, and `excludedFrames` makes the omission visible. A 260 ms or 900 ms hitch is stored. Document this split in `PERFORMANCE_BUDGETS.md`.

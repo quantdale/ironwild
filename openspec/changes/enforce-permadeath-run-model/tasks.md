@@ -14,11 +14,11 @@ This change edits `src/ui/menus.js buildDom()` and `src/main.js`. Sibling change
 - [ ] 1.2 Add `hasRestorableRun()` that returns true only when a save slot exists, parses, and does **not** carry `run.ended === true`. Treat any missing, non-boolean, or malformed `run` value as "not ended" (a corrupt field must never brick a live run).
 - [ ] 1.3 Keep `hasSave()` as a slot-presence check (do not change its meaning) — the fix depends on the two predicates being distinct.
 - [ ] 1.4 In `loadGame()`, add an early rejection for a save whose `run.ended === true` (return `false`, no mutation of `G`).
-- [ ] 1.5 Ensure a save written **without** a `run` field still loads (backward compatibility for existing v2/v3 saves).
+- [ ] 1.5 Ensure a save written without a `run` field still loads. Current saves are version 4; v2 and v3 remain valid. Do not reject v4.
 
 ## 2. Mark the run ended on death
 
-- [ ] 2.1 In `src/systems/save.js initSave()`, subscribe to `bus.on('playerDied')` and add an internal `markRunEnded()` handler that writes the terminated run's snapshot with `run: { ended: true, endedAt: <elapsed> }` directly to the slot.
+- [ ] 2.1 In `src/systems/save.js initSave()`, subscribe to `bus.on('playerDied')` and add `markRunEnded()`. Write the current `serialize()` payload, including expedition, plus `run: { ended: true, endedAt }`. Do not hand-build a smaller snapshot that drops expedition.
 - [ ] 2.2 Confirm the mark write cannot be skipped by the `!G.gameOver` guard on `saveGame()` — the handler composes the payload itself rather than calling `saveGame()`.
 - [ ] 2.3 Verify frame ordering: `playerDied` is emitted during the sim step, before the per-frame save tick, so the mark is written before any later save could occur; add a comment recording this ordering dependency.
 - [ ] 2.4 Make the mark write failure-safe: if the write throws or the slot is unparsable, fall back to `clearSave()` so a finished run is not left restorable; never throw into the death flow.
@@ -46,7 +46,7 @@ This change edits `src/ui/menus.js buildDom()` and `src/main.js`. Sibling change
 ## 5. E2E coverage
 
 - [ ] 5.1 Add a spec: start a run, save (quicksave), die, click RESTART, and assert the title screen shows no CONTINUE and does show NEW RUN.
-- [ ] 5.2 Add a spec: after a death, choose NEW RUN and assert the new run starts from default state (health, inventory, level).
+- [ ] 5.2 Add a spec: after a death, choose NEW RUN and assert the new run starts from default health, inventory, level, bestiary, and expedition state.
 - [ ] 5.3 Keep `tests/e2e/save-continue.spec.js` (save → reload → continue restores position) passing unchanged — this guards against over-correction that would make live runs non-restorable.
 - [ ] 5.4 Add a spec asserting a new run can itself be saved and continued (so the lifecycle is not a dead end).
 - [ ] 5.5 Run the full Playwright suite; confirm the console stays clean.
@@ -60,7 +60,7 @@ This change edits `src/ui/menus.js buildDom()` and `src/main.js`. Sibling change
 
 ## 7. Documentation
 
-- [ ] 7.1 Update the `README.md` "How to play" line so the death/restart flow matches the enforced behavior (death ends the run; the next start begins a new run).
+- [ ] 7.1 Update the README death line and the save-system sentence that says XP and the bestiary "persist too". State that those fields are saved with a live run and do not survive death. Do not leave a sentence that can be read as meta-progression.
 - [ ] 7.2 Update the `src/systems/save.js` header comment to document the run lifecycle, the `run.ended` marker, and the distinction between `hasSave()` and the restorable predicate.
 - [ ] 7.3 If a `docs/` run-economy or bestiary doc describes continuing after death, update it to match.
 - [ ] 7.4 Record in the change notes that this is an intentional reduction in player convenience, matching the documented design.

@@ -18,8 +18,10 @@ Applying an experience grant SHALL terminate within a bounded amount of work reg
 - **THEN** the grant is not truncated by the bound
 
 #### Scenario: Level advancement stays within the supported range
-- **WHEN** progression reaches the maximum supported level
-- **THEN** the level does not advance beyond that range during ordinary play
+- **WHEN** progression is already at the maximum supported level and more experience is granted
+- **THEN** the level does not advance
+- **AND** no additional skill point is granted for the blocked advancement
+- **AND** accumulated experience is left below the current level threshold
 
 #### Scenario: A normal grant is unaffected
 - **WHEN** accumulated experience is below the current level threshold
@@ -27,7 +29,7 @@ Applying an experience grant SHALL terminate within a bounded amount of work reg
 
 ### Requirement: Progression invariants hold at every entry point
 
-Progression state SHALL satisfy the relationship `cur < next` after being established at boot, not only when restored from a save. A boot sequence, a partial restore, or any future path that establishes progression state SHALL NOT be able to leave accumulated experience at or above the level threshold.
+The one-shot boot normalizer SHALL leave accumulated experience below the level threshold. A later direct write is not observed by that normalizer. Every return from an experience grant SHALL also leave accumulated experience below the level threshold, whether the grant finished normally, hit its iteration bound, or stopped at the maximum level. The save loader already enforces the same relationship and SHALL NOT be weakened.
 
 #### Scenario: Boot establishes the relationship
 - **WHEN** progression state is initialized at boot with individually valid but mutually inconsistent values

@@ -5,7 +5,7 @@ The spatial cell streaming system (`src/world/cells.js`) that is supposed to hid
 ## What Changes
 
 - **Fix the initial-visibility state machine in the cell manager.** `updateCells()` must be able to transition a cell from "registered and visible" to "out of band and hidden" even on its very first streamed pass, instead of only deactivating cells whose `active` flag is already set. A cell outside the activation radius at the first pass must begin hidden (or be driven through the same active→inactive transition), and the pre-streaming "everything visible" parity must only be a *first-frame* default, not a permanent state for far cells.
-- **Make the visibility band symmetric from the first tick.** The deactivation branch must be reachable for a cell that starts `active: false` but is already out of band, so the counters (`registered`/`active`/`retired`) and the actual per-cell `group.visible` state agree at all times.
+- **Make the first evaluation able to hide a never-activated cell.** The hide path must run for a cell that starts `active: false` and is outside the entry radius. Later passes keep the existing two-radius hysteresis: enter at 2 cells, leave past 2.6. Do not collapse those radii into one `d2 <= deact2` test, and do not skip a first hide because `active` is already false.
 - **Add regression coverage** for "a freshly-registered out-of-band cell becomes hidden after the first `updateCells` pass" and for the counter/`visible` agreement invariant.
 - Preserve the existing gradual-adoption property: content must not one-frame flash to hidden before the manager has produced its first streaming decision.
 

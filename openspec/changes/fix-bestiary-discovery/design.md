@@ -83,11 +83,14 @@ Unchanged. `G.bestiary[type] = { seen, killed }` is already what `save.js` seria
 ## Control flow after the change
 
 ```text
-arrow -> machine hit
-  -> machine.hit() resolves
+arrow or spear -> weapon path confirms the hit
+  -> machine.hit() resolves damage and returns true
+  -> the weapon path, not hit() itself, emits machineHit
+       projectiles.js resolveHit
+       spear.js applySwingHits
   -> bus.emit('machineHit', { machine, point, damage, weak, partName })
-       -> bestiary.onHit  -> markSeen(m.type)      [NEW]  -> notify once + bestiaryUnlock
-       -> audio, vfx, damage FX, HUD                (existing)
+       -> bestiary.onHit  -> markSeen(m.type)      [NEW]
+       -> audio, vfx, damage FX                     (existing)
 
 focus scan (Vantage only)
   -> bus.emit('machineScanned', { machine })        [unchanged]
@@ -131,7 +134,7 @@ Additive subscriber; no signature, persistence, or settings changes. `G.bestiary
   - `machineHit` with no `machine` is ignored;
   - `speciesLore` returns the line only when `killed`, and `speciesName` falls back to the raw key.
 - Save round-trip (extend the save suite from `harden-core-verification`, or assert here): a revealed-only entry serializes and restores as `{seen: true, killed: false}`; a malformed bestiary record from a hand-edited save restores to safe booleans (already implemented in `save.js`, now covered).
-- E2E: start a run, force a hit on a non-Vantage machine via `window.__IW.G` + `machine.hit(...)` (the E2E suite already drives machines this way in `combat-smoke.spec.js`), then assert `G.bestiary[type].seen === true` while `killed === false`; kill it and assert `killed === true`.
+- E2E: `machine.hit()` does not emit `machineHit`. `combat-smoke.spec.js` uses `hit()` to prove damage and death, which is not a discovery signal. A non-lethal `hit()` alone must leave `seen === false`. The E2E must emit `machineHit` after a non-lethal resolved hit, or drive the projectile/spear path that emits it, and only then assert `seen === true` and `killed === false`. A lethal `hit()` marks seen through `machineDied` and does not prove the new trigger.
 - Non-regression: the existing Vantage scan → map reveal path (covered by manual/contract behavior and, if present, an existing E2E assertion) must still pass.
 
 ## Risks

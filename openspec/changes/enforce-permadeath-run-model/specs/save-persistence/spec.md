@@ -52,7 +52,7 @@ A newly started run SHALL begin with the game's default starting state rather th
 
 #### Scenario: Progression does not carry across runs
 - **WHEN** a player starts a new run after a previous run ended
-- **THEN** the new run begins with default progression and contract state
+- **THEN** the new run begins with default progression, contract, bestiary, and expedition state
 
 #### Scenario: A new run can be saved and continued
 - **WHEN** a new run is in progress and is saved

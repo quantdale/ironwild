@@ -21,7 +21,7 @@ This is the **last** change in the recommended order, because it documents the o
 - [ ] 2.1 Rewrite the `## Project layout` block from the actual tree, one line per directory, in the existing terse style.
 - [ ] 2.2 Add the missing source directories: `src/anim/` (animation graph + machine animators), `src/assets/` (asset manifest/conventions), `src/input/` (gamepad layer), `src/render/` (environment lighting + art direction), `src/vfx/` (pooled VFX engine + effect library).
 - [ ] 2.3 Correct the `src/world/` description to mention cell streaming, LOD helpers, and landmarks, not only terrain/sky/weather/props.
-- [ ] 2.4 Correct the `src/systems/` description to mention the asset pipeline, telemetry, and dynamic resolution.
+- [ ] 2.4 Correct the `src/systems/` description to mention the asset pipeline, telemetry, dynamic resolution, and frontier expeditions.
 - [ ] 2.5 Add `scripts/` (tooling: asset generation, asset validation, perf capture, E2E chunking), `public/assets/` (authored GLBs + provenance), and `openspec/` (change proposals).
 - [ ] 2.6 Omit `src/world/materials.js` from the layout description if `retire-dead-scaffolding` has landed; otherwise mark it as unused so the README does not point a reader at dead code.
 
@@ -34,9 +34,9 @@ This is the **last** change in the recommended order, because it documents the o
 
 ## 4. Correct the false innerHTML invariant
 
-- [ ] 4.1 In `src/ui/menus.js`, rewrite the `setPanelHtml` header comment so it no longer claims raw `innerHTML` assignments are absent from the codebase. State the actual policy: menu templates go through DOMParser; three other modules assign `innerHTML` with build-time constants only.
-- [ ] 4.2 Add a one-line invariant note at each of the three `innerHTML` sites — `src/ui/settings.js` (settings overlay), `src/ui/hud.js` (SVG reticle markup), `src/systems/quests.js` (contract slot template) — reading: static build-time template only; never interpolate dynamic, user, or network data (use `textContent` for that).
-- [ ] 4.3 Do **not** convert the three sites to DOMParser in this change; record it as an optional follow-up (SVG `innerHTML` → DOMParser can change rendering in some engines, and there is no current injection risk).
+- [ ] 4.1 In `src/ui/menus.js`, rewrite the `setPanelHtml` header comment so it no longer claims raw `innerHTML` assignments are absent. State the actual policy: menu templates go through DOMParser; four other sites assign static `innerHTML` only.
+- [ ] 4.2 Add a one-line invariant note at each direct `innerHTML` site: `src/ui/settings.js`, `src/ui/hud.js`, `src/systems/quests.js`, and `src/systems/expedition.js`. The note must say the template is static and dynamic or user data must use `textContent`.
+- [ ] 4.3 Do **not** convert the four sites to DOMParser in this change; record it as an optional follow-up. SVG `innerHTML` → DOMParser can change rendering in some engines, and there is no current injection risk.
 - [ ] 4.4 Grep for any other comment asserting a codebase-wide invariant that does not hold and fix or remove it.
 
 ## 5. Status banners on the architecture documents
@@ -56,7 +56,7 @@ This is the **last** change in the recommended order, because it documents the o
 ## 7. Cross-module state ownership note
 
 - [ ] 7.1 In `src/core/state.js`, narrow or qualify the header claim that "anything cross-module lives here" so it matches reality.
-- [ ] 7.2 Document the fields declared elsewhere: `G.timeOfDay` (`world/environment.js`), `G.quests.genCount` (`systems/quests.js`), `G.weather.gust` / `lastStrikeAt` / `lastStrikeDist` (`world/weather.js`), and the Wave J accessibility keys (`ui/settings.js`, already documented as deliberate).
+- [ ] 7.2 Document the fields declared elsewhere: `G.timeOfDay` (`world/environment.js`), `G.quests.genCount` (`systems/quests.js`), `G.weather.gust` / `lastStrikeAt` / `lastStrikeDist` (`world/weather.js`), `G.expedition` (`systems/expedition.js`, normalized and persisted by `save.js`), and the Wave J accessibility keys (`ui/settings.js`, already documented as deliberate).
 - [ ] 7.3 For each, state the single owning writer and the known consumers so a future contributor knows where to look.
 - [ ] 7.4 Do **not** relocate any of these fields in this change; documenting the actual arrangement is the scope. Note relocation as a possible future cleanup.
 - [ ] 7.5 Coordinate with `fix-hud-telemetry-accuracy`, which adds a machine-cap constant to `CONFIG` in the same file.

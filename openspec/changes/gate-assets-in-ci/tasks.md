@@ -4,7 +4,7 @@
 
 This change edits `.github/workflows/ci.yml` and `package.json`. Sibling changes that also touch them:
 
-- **`harden-core-verification`** adds its own CI steps (dependency audit, coverage) and a `test:coverage` script to the same files. **This is the highest-conflict pairing in the set** — two changes appending steps to one workflow file and editing one scripts block. Pick an order, apply it, and keep the two in separate commits; do not have two agents open `ci.yml` at once. Whichever lands first, the second must re-read the file before editing.
+- **This change is the sole owner of the CI dependency-audit step, the CI asset-validation step, and the `assets:validate` insertion into `verify`.** `harden-core-verification` must not add those. It may add a separate `test:coverage` script; do not fold that script into `verify` and do not remove it if it has already landed. Re-read `ci.yml` and `package.json` before editing.
 - **`sync-project-documentation`** edits `README.md` (quality-gate list) to reflect the new gate; apply it after this change so the documented gate matches what actually runs.
 - **`restore-machine-combat-visuals`** extends `tests/e2e/asset-pipeline.spec.js`; this change only references it (no edit), so no conflict.
 

@@ -40,13 +40,14 @@ Four of those eight named areas had no unit test before that change. The two cha
 
 > "…but routing through DOMParser keeps raw innerHTML assignments **out of the codebase**: the parser adopts nodes safely and never executes scripts."
 
-Reality — three direct `innerHTML` assignments exist:
+Reality — four direct `innerHTML` assignments exist:
 
 | Location | Interpolates |
 | --- | --- |
-| `src/ui/settings.js:269` | build-time constants (slider defs, mode lists, quality/difficulty options) |
-| `src/ui/hud.js:578` | the SVG reticle markup, built from `RET_R` / `RET_C` constants |
-| `src/systems/quests.js:162` | the contract slot template (icon/name/bar markup) |
+| `src/ui/settings.js` settings overlay | build-time constants (slider defs, mode lists, quality/difficulty options) |
+| `src/ui/hud.js` SVG reticle | markup built from `RET_R` / `RET_C` constants |
+| `src/systems/quests.js` contract slot | icon/name/bar markup |
+| `src/systems/expedition.js` `buildUi()` | a static frontier-expedition template; title and detail are later set with `textContent` |
 
 All three interpolate only module-level constants — there is no injection vulnerability today, and none is being claimed. The defect is that the comment tells a future maintainer a codebase-wide invariant holds when it does not, so a later editor may add a dynamic value to one of the other `innerHTML` sites believing the pattern is already considered safe. That is a real (if modest) maintenance hazard created by a false invariant.
 
@@ -91,10 +92,10 @@ Correct the claims, add the missing index, and leave the historical design recor
 
 Two honest options:
 
-- **(A) Make the comment true.** Rewrite the `menus.js` header to say that `setPanelHtml` uses DOMParser *for the menu templates* and that three other modules assign `innerHTML` with build-time constants only. Add a one-line note at each of the three sites stating the invariant: *static template only; never interpolate dynamic or user data — use `textContent` for that.* This is a comment-only fix and is the minimum correct change.
-- **(B) Also convert the three sites to DOMParser/textContent.** Removes the class of hazard entirely.
+- **(A) Make the comment true.** Rewrite the `menus.js` header to say that `setPanelHtml` uses DOMParser for the menu templates and that four other sites assign `innerHTML` with static templates only. Add a one-line note at each site: *static template only; never interpolate dynamic or user data — use `textContent` for that.* This is the required change.
+- **(B) Also convert the four sites to DOMParser/textContent.** Removes the class of hazard entirely.
 
-Choose **(A)** as the required change and record **(B)** as an optional follow-up. Rationale: the three sites currently violate no invariant, and converting `hud.js`'s SVG `innerHTML` to DOMParser is a behavior-sensitive edit to a live reticle (browsers historically parsed SVG differently via `innerHTML` vs. DOMParser — switching can change rendering in some engines) for no current security benefit. Choosing (B) here would trade a documentation defect for a rendering risk. The invariant note at each site is what actually prevents the hazard.
+Choose **(A)** as the required change and record **(B)** as an optional follow-up. Rationale: the four sites currently violate no invariant, and converting `hud.js`'s SVG `innerHTML` to DOMParser is a behavior-sensitive edit to a live reticle (browsers historically parsed SVG differently via `innerHTML` vs. DOMParser — switching can change rendering in some engines) for no current security benefit. Choosing (B) here would trade a documentation defect for a rendering risk. The invariant note at each site is what actually prevents the hazard.
 
 ### Architecture document status banners
 
@@ -146,7 +147,7 @@ None. The only source-file edit is a comment (option A) plus, if taken, optional
 ## Alternatives considered
 
 - **Rewrite `ARCHITECTURE.md` to describe the current 9-machine roster.** Rejected: it would destroy the v1 contract record that the module comments and the design rationale still reference, and the V2/V3 documents exist precisely because the waves were additive. A status banner is the correct, minimal fix.
-- **Take option (B) and convert the three `innerHTML` sites.** Rejected as described above (SVG parsing risk in `hud.js` for no current benefit).
+- **Take option (B) and convert the four `innerHTML` sites.** Rejected as described above (SVG parsing risk in `hud.js` for no current benefit).
 - **Delete the `aaa-upgrade` planning documents** as superseded by OpenSpec. Rejected: they carry long-range product/strategy intent (visual identity, engine-migration triggers, the vertical-slice bar) that the change proposals deliberately do not restate, and deleting them would lose real content.
 - **Add a docs-lint CI job** that fails when the README layout block drifts from the tree. Tempting and cheap, but the layout block is prose (descriptions, not just names), so a mechanical check would be brittle. Rejected; noted as an option.
 

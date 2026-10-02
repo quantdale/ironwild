@@ -8,13 +8,14 @@ Defines the contract of the in-game instrumentation and HUD threat display: that
 
 The HUD's directional threat indicators SHALL be able to display one indicator per aggro machine for any machine population the world can actually reach, and SHALL NOT silently drop indicators because a pool was sized from a different constant than the one that caps the population.
 
-#### Scenario: Every aggro machine gets an indicator
-- **WHEN** the world contains the maximum number of machines and more than that number are aggro
+#### Scenario: Every simultaneously aggro machine gets an indicator
+- **WHEN** the world contains its maximum population and every one of those machines is aggro
 - **THEN** each aggro machine has a visible directional indicator
 
-#### Scenario: Indicators beyond the pool size are not silently dropped
-- **WHEN** the number of aggro machines exceeds the number of allocated indicator elements
-- **THEN** additional indicators are allocated rather than the machines being skipped
+#### Scenario: Indicators beyond the initial pool are not silently dropped
+- **WHEN** the number of currently aggro machines exceeds the number of indicator elements allocated at startup
+- **THEN** additional indicators are allocated rather than the extra aggro machines being skipped
+- **AND** a calm machine does not consume an indicator that an aggro machine needs
 
 #### Scenario: Indicator count follows the real population cap
 - **WHEN** the population cap used by machine spawning is compared against the allocated indicator count
@@ -28,22 +29,22 @@ The HUD's directional threat indicators SHALL be able to display one indicator p
 
 Frame-time percentiles reported by the telemetry system SHALL be computed from the actual observed frame times. A sample MUST NOT be silently truncated to a ceiling before it enters the distribution, because that makes the reported tail equal to the ceiling and hides the regressions the metric exists to detect.
 
-#### Scenario: A long frame is reported at its true length
-- **WHEN** a frame takes longer than any clamp value currently applied before sampling
-- **THEN** the reported percentiles reflect that frame's true duration rather than a capped value
+#### Scenario: A rendered hitch is reported at its true length
+- **WHEN** a rendered frame takes 900 ms
+- **THEN** the reported percentiles reflect 900 ms rather than a 250 ms ceiling
 
-#### Scenario: Tab-resume gaps are excluded, not truncated
-- **WHEN** the tab is hidden and later resumed, producing one very large inter-frame delta
-- **THEN** that gap sample is excluded from the distribution entirely
-- **AND** it is not represented as a frame of some capped duration
+#### Scenario: True gaps are excluded, not truncated
+- **WHEN** an inter-frame delta is non-finite, non-positive, or longer than the 2000 ms gap ceiling
+- **THEN** that sample is excluded from the distribution
+- **AND** it is not stored as 250 ms, as 2000 ms, or as its raw gap duration
 
 #### Scenario: Exclusion is reported
 - **WHEN** one or more samples have been excluded from the distribution
 - **THEN** the report indicates how many were excluded
 
-#### Scenario: Distribution is not saturated
-- **WHEN** a capture is run under a condition that produces genuine multi-second stalls
-- **THEN** the reported p99 differs from any internal ceiling value
+#### Scenario: A hitch does not saturate the tail at the old clamp
+- **WHEN** a capture contains a 900 ms rendered frame and no sample above the gap ceiling
+- **THEN** the reported p99 is not 250
 
 ### Requirement: Reported entity counts are live counts
 

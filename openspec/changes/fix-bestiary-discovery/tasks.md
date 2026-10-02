@@ -46,7 +46,7 @@ Two nearby changes touch related code, so read them before deciding scope (neith
 
 ## 5. E2E coverage
 
-- [ ] 5.1 Start a run, select a non-Vantage machine, apply resolved damage through its own `hit()` path (mirroring the approach already used in `tests/e2e/combat-smoke.spec.js`), and assert `G.bestiary[type].seen === true` while `killed === false`.
+- [ ] 5.1 Start a run and select a non-Vantage machine. First apply non-lethal damage through `machine.hit()` alone and assert `seen` stays false: `hit()` does not emit `machineHit`. Then emit `machineHit` for that machine, or drive the projectile/spear path that emits it, and assert `seen === true` while `killed === false`. Do not use a lethal `hit()` for this assertion; death marks seen through `machineDied` and would hide a missing subscriber.
 - [ ] 5.2 Kill the same machine and assert `G.bestiary[type].killed === true`.
 - [ ] 5.3 Assert the Vantage scan → map reveal path is unaffected (either reuse an existing assertion or drive a scan directly and assert `G.mapRevealed === true` and the skill-point grant).
 - [ ] 5.4 Assert the console stays clean through the sequence.

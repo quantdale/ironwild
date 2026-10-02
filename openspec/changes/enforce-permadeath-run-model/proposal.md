@@ -21,5 +21,5 @@ The README promises "Death is permanent per run — restart and try again", but 
 ## Impact
 
 - Affected code: `src/systems/save.js` (death handling / slot invalidation, `hasSave`, `loadGame`), `src/ui/menus.js` (death flow, `onPlayerDied`, `deathHandled`, start-screen `saveAvailable`/`continueGame`/`newRun`), `src/main.js` (frame-loop ordering of the death signal relative to the save tick), `tests/unit/` and `tests/e2e/save-continue.spec.js`.
-- Persisted shape: an optional run-state marker inside the existing `ironwild-save` object (additive; older saves without the marker keep loading unchanged). No migration is required because the change only ever *adds* a field and reads it defensively.
+- Persisted shape: an optional `run` marker inside the existing `ironwild-save` object. Current saves are version 4 and already include expedition state. Older v2 and v3 saves without `run` stay restorable. A new run does not keep XP, bestiary, or expedition from the dead run; the README line that those fields "persist too" means they are saved with a live run, not that they survive death.
 - Player-visible: the Continue button disappears after a death; a new run starts clean. This is a deliberate reduction in player convenience and must be reflected in the README.

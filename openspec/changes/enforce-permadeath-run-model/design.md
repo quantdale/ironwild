@@ -128,7 +128,7 @@ RESTART -> location.reload()
 
 ## Data-flow / state changes
 
-- `ironwild-save` gains an optional `run: { ended: boolean, endedAt: number }`. Older saves (no `run` field) are treated as restorable — a pre-existing v2/v3 save must still load, so the *absence* of the marker means "live run".
+- `ironwild-save` gains an optional `run: { ended: boolean, endedAt: number }`. Current `SAVE_VERSION` is 4. A v2, v3, or v4 save with no `run` field, or with `run.ended` not strictly `true`, stays restorable. `markRunEnded()` must write the existing `serialize()` payload plus the marker, so expedition state is not dropped from the ended slot.
 - `save.js` gains `hasRestorableRun()` and an internal `markRunEnded()`; `loadGame()` gains a rejection branch.
 - `menus.js buildDom()` switches its gate from `saveAvailable()` to the restorable predicate; NEW RUN's render condition changes from "slot exists" to "slot exists" (unchanged) but its *meaning* now also covers finished runs.
 - No other persisted field changes. No settings change. No `G.*` field is added.
