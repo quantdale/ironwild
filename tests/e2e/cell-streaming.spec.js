@@ -43,18 +43,44 @@ test('spawn meadow reports active batches below the registered total', async ({ 
 test('moving to another region re-converges the cell counters', async ({ page }) => {
   test.setTimeout(900_000);
   await startGame(page);
+
+  async function visibleBatchIds() {
+    return page.evaluate(() => {
+      const ids = [];
+      window.__IW.scene.traverse((o) => {
+        if (o.isInstancedMesh && o.visible) ids.push(o.uuid);
+      });
+      return ids.sort();
+    });
+  }
+
+  // Establish a stable out-of-band world at spawn before teleporting.
   await expect
     .poll(async () => (await cellStats(page)).active, { timeout: SWGL_POLL_MS })
     .toBeLessThan((await cellStats(page)).registered);
+  const before = await visibleBatchIds();
+  expect(before.length).toBeGreaterThan(0);
 
+  // Reachable destination: ~240u from spawn (0,8), still inside the soft
+  // world border (playRadius + 25 = 295), far enough that the active band
+  // (120u) no longer overlaps the spawn band.
   await page.evaluate(() => {
     const p = window.__IW.G.player.pos;
-    p.x = 600;
+    p.x = 240;
     p.z = 0;
   });
+
+  // Require a real transition: the visible batch set must actually change,
+  // not merely satisfy active < registered again at the same spot.
   await expect
-    .poll(async () => (await cellStats(page)).active, { timeout: SWGL_POLL_MS })
-    .toBeLessThan((await cellStats(page)).registered);
+    .poll(async () => (await visibleBatchIds()).join(','), { timeout: SWGL_POLL_MS })
+    .not.toBe(before.join(','));
+
+  const after = await visibleBatchIds();
+  expect(after.length).toBeGreaterThan(0);
   const atFar = await cellStats(page);
+  expect(atFar.active).toBeLessThan(atFar.registered);
+  // Counters must stay coherent after the transition.
+  expect(atFar.active).toBeGreaterThan(0);
   expect(atFar.active).toBeLessThan(atFar.registered);
 });

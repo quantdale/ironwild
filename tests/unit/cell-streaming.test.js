@@ -32,6 +32,39 @@ describe('updateCells first-pass behavior', () => {
     expect(far.group.visible).toBe(false);
   });
 
+  it('hides a late registration into an already-hidden cell instead of leaking it visible', async () => {
+    const cells = await freshCells();
+    const first = registerAt(cells, 600, 0);
+
+    cells.updateCells({ x: 0, z: 0 }, 0.016);
+    expect(first.group.visible).toBe(false);
+
+    const late = registerAt(cells, 600, 0);
+    expect(late.group.visible).toBe(false);
+    expect(cells.getCellStats().active).toBe(0);
+    expect(cells.getCellStats().registered).toBe(2);
+
+    // ...and it still adopts band state on later passes (shown when in band).
+    cells.updateCells({ x: 600, z: 0 }, 0.016);
+    expect(late.group.visible).toBe(true);
+    expect(first.group.visible).toBe(true);
+    expect(cells.getCellStats().active).toBe(2);
+  });
+
+  it('keeps parity for a late registration into a never-evaluated cell until its first pass', async () => {
+    const cells = await freshCells();
+    registerAt(cells, 600, 0);
+
+    cells.updateCells({ x: 0, z: 0 }, 0.016);
+    const late = registerAt(cells, 700, 0);
+
+    // Brand-new cell: not yet evaluated, so pre-streaming parity holds...
+    expect(late.group.visible).toBe(true);
+    // ...and the first pass hides it like any other out-of-band cell.
+    cells.updateCells({ x: 0, z: 0 }, 0.016);
+    expect(late.group.visible).toBe(false);
+  });
+
   it('leaves registered content visible before any updateCells call', async () => {
     const cells = await freshCells();
     const rec = registerAt(cells, 600, 0);

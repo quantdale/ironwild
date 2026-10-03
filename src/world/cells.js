@@ -163,6 +163,11 @@ export function register(cellKey, record) {
   cell.records.push(rec);
   totalRegistered++;
   setRecordShown(rec, true);
+  // A cell the manager has already evaluated adopts its current visibility:
+  // registering into a hidden (out-of-band) cell must not leak a batch that
+  // stays visible forever. Pre-first-decision cells keep parity (shown) so
+  // the title screen and first frame render the full world.
+  if (cell.streamed && !cell.active) setRecordShown(rec, false);
   return rec;
 }
 
