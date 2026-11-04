@@ -58,3 +58,9 @@ Fix contradictions when found. Avoid persisted live-HEAD claims in living docs u
 Inspect current status and final diff. Do not discard unrelated work, force-push, rewrite history, or use destructive cleanup as a convenience. Commit only intentional, validated changes; report any skipped or unavailable validation precisely.
 
 Subdirectory-specific instructions may add stricter requirements but must not silently weaken this contract.
+
+## Cross-project UX, DX, and AX principles
+
+Cut taglines, helper text and secondary labels. If a screen needs them to make sense, fix the layout.
+
+Make the best decision that will elevate all three: the user experience (UX), developer experience (DX), and agent experience (AX) always, without breaking anything.

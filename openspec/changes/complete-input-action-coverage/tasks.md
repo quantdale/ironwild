@@ -10,13 +10,13 @@ This change edits `src/ui/menus.js` (`updateMenus` panel polls) and `src/ui/sett
 
 `src/input/gamepad.js` is also touched by `retire-dead-scaffolding` (which deletes the unused `rumble()` helper). If that change lands first, the D-pad/button-index work here is unaffected; if it lands after, ensure it does not re-add `rumble`.
 
-## 1. Gamepad parity for the four unmapped actions
+## 1. Gamepad parity for the five unmapped actions
 
-- [ ] 1.1 In `src/input/gamepad.js`, add the standard-mapping indices needed for the new bindings to `PAD_BUTTONS` if not already present: `R3` (right stick press, index 11), `SELECT` (index 8), and the D-pad indices (12–15) are already present — confirm before editing.
-- [ ] 1.2 Before implementing, verify no runtime consumer reads `uinavUp` (button 12) during active gameplay; `ui/menus.js` and `ui/settings.js` are the only readers. If a gameplay-time consumer exists, use the documented fallback mapping instead.
-- [ ] 1.3 In `src/core/input.js PAD_ACTIONS`, add predicates for the four unmapped gameplay actions using the mappings chosen in `design.md`: `heal` → D-pad Up, `melee` → right stick press (R3), `arrowToggle` → Select/Back, `quicksave` → D-pad Left.
+- [ ] 1.1 In `src/input/gamepad.js`, add the missing `PAD_BUTTONS` entries `SELECT: 8` and `R3: 11`. D-pad indices 12–15 are already present. Do not assume Select or R3 already exist.
+- [ ] 1.2 No current gameplay consumer reads `uinavUp`. Still suppress `heal`, `quicksave`, and `map` while a panel, the pause menu, or the settings modal is open. Do not suppress `melee` or `arrowToggle` with that rule.
+- [ ] 1.3 In `src/core/input.js PAD_ACTIONS`, add `heal` → D-pad Up, `melee` → R3, `arrowToggle` → Select, `quicksave` → D-pad Left, and `map` → D-pad Right.
 - [ ] 1.4 Confirm each new predicate is a pure read of the gamepad snapshot (`p.held[...]` / `p.nav[...]`) matching the existing predicate style, and that it is guarded by `p.connected` via the existing `_rawAction` path.
-- [ ] 1.5 Re-run the mechanical parity check used in the audit (diff the keys of `DEFAULT_BINDINGS` against `PAD_ACTIONS`) and confirm the only actions without a pad source are the `uinav*` UI-navigation group, which is driven by `state.nav` edges rather than `PAD_ACTIONS` held-state.
+- [ ] 1.5 Re-run the parity check. After this change, `heal`, `quicksave`, `melee`, `arrowToggle`, and `map` must have `PAD_ACTIONS` entries. `uinav*` may remain edge-driven. `inventory`, `skills`, and `bestiary` are keyboard panel actions and are not required to gain pad bindings. `pause` stays reachable through the Start-to-Escape pulse rather than a new `PAD_ACTIONS` entry.
 
 ## 2. Clear stale gamepad edges on disconnect
 
@@ -39,7 +39,7 @@ This change edits `src/ui/menus.js` (`updateMenus` panel polls) and `src/ui/sett
 ## 4. Unit coverage
 
 - [ ] 4.1 Extend `tests/unit/input-actions.test.js` (existing pattern: `vi.resetModules()` + dynamic import, capture and invoke the registered listeners directly).
-- [ ] 4.2 Parity test: assert every gameplay action in `DEFAULT_BINDINGS` (excluding the `uinav*` group) has a `PAD_ACTIONS` entry; assert `heal`, `quicksave`, `melee`, `arrowToggle` are present.
+- [ ] 4.2 Parity test: assert `heal`, `quicksave`, `melee`, `arrowToggle`, and `map` have `PAD_ACTIONS` entries. Do not fail the test because `inventory`, `skills`, or `bestiary` lack pad entries.
 - [ ] 4.3 Synthetic-pad test: stub `navigator.getGamepads()` with a connected standard-mapping pad, press the new buttons across polls, assert the action reports held and produces exactly one rising edge across the press, then releases.
 - [ ] 4.4 Disconnect test: START down on a connected pad, then `getGamepads()` returns `[]`; assert `startEdge` is `false`, `edges` is empty, and repeated `beginFrame()` calls never add `Escape` to `pressedSet`.
 - [ ] 4.5 Reconnect test: reconnect a pad with a button not down; assert no phantom rising edge is produced for that button.

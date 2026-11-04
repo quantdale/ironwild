@@ -1,11 +1,11 @@
 ## Why
 
-Two user- and operator-facing surfaces report things that are not true. The HUD's compass allocates its threat-direction dot pool from `CONFIG.maxMachines` (14) while the world actually spawns up to 17 machines, so aggro indicators for the last machines are silently dropped. And the performance telemetry clamps frame-time samples at 250 ms *before* computing percentiles, so the reported p95/p99 are floors rather than measurements — the committed baseline shows `p99: 250` in every scenario, which is the clamp value, not an observation. That makes the tool unable to detect exactly the tail-latency regressions it exists to catch.
+Two user- and operator-facing surfaces report things that are not true. The HUD compass allocates 14 threat dots from `CONFIG.maxMachines` while the world can contain 17 machines. `updateDots()` skips calm machines before taking a dot, so this is not "index 14 and above never appear". The failure is simultaneous aggro: once 14 aggro machines have taken the pool, every further aggro machine is skipped. Separately, performance telemetry clamps frame-time samples at 250 ms before computing percentiles, so the committed baseline's `p99: 250` is the clamp, not an observation. That hides the tail-latency regressions the metric exists to catch.
 
 ## What Changes
 
 - **Size the compass dot pool from the real machine cap.** The pool must be large enough for every machine the world can contain, and the HUD must still work if that count changes at runtime.
-- **Report unclamped tail latency.** Frame-time percentiles must reflect real samples; the tab-resume guard must drop gap frames rather than silently truncating them into the distribution.
+- **Report hitch samples and exclude only non-frames.** A rendered hitch, including a 900 ms frame, must enter the distribution at its true duration. Only non-finite, non-positive, and true gap deltas (above a 2000 ms ceiling, or a hidden-tab resume) are excluded. Do not reuse `dynres.js`'s 250 ms controller cutoff for this distribution: that cutoff is what currently hides the tail.
 - **Distinguish "clamped" from "observed" in the report.** If any sample is excluded, the report must say so instead of presenting a truncated distribution as if it were complete.
 - **Stop reporting pool size as live entity count.** The telemetry scene snapshot currently reports `arrows: 40` because it reports the size of the fixed arrow pool rather than the number of arrows in flight; same class of issue for any other pool-derived number.
 - **Make the committed baseline honest.** Regenerate or annotate it so a saturated percentile is not read as a measurement.

@@ -4,8 +4,8 @@ The repository has no dependency-security gate, and `npm audit` reports **3 live
 
 ## What Changes
 
-- **Add a dependency-security gate to CI** that fails on high/critical advisories, and remediate the advisories currently present.
-- **Add the asset validator to CI and to `npm run verify`**, so authored assets are validated on every change like any other source artifact.
+- **Add a dependency-security gate to CI** that fails on high/critical advisories, and remediate the advisories currently present. This change is the only owner of that CI step.
+- **Add the asset validator to CI and to `npm run verify`**, so authored assets are validated on every change like any other source artifact. `harden-core-verification` must not add a second copy of this step.
 - **Fail CI on the validator's hard errors; surface its warnings.** Errors already fail the validator; warnings (which include Khronos notices that are expected for KTX2 textures and for the certification prop) must be visible in the job log without failing the build, so real regressions are not lost in noise.
 - **Expose the asset-generation scripts as npm commands** so every shipped asset is reproducible from documented commands, matching the existing `assets:create-cert`.
 - **Record the audit baseline.** Record the current advisory state and the decision about each class of finding, so the gate's threshold is a documented choice rather than an accident.

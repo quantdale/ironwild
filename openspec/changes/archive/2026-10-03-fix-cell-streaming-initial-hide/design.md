@@ -48,21 +48,28 @@ The committed perf baseline `docs/perf/baseline-45cfa51-inteluhd.txt` corroborat
 
 ## Chosen approach
 
-Rework the per-pass visibility decision so it is evaluated for every cell on every pass, driven purely by the in-band predicate, with the per-cell `active` flag retained only as a bookkeeping/hysteresis aid (and for the shadow budget), not as a gate on the hide path.
+> **Plan correction.** An earlier draft used one predicate, `inBand = d2 <= deact2`, and skipped work when `cell.active === inBand`. That rule reintroduces the bug: a never-activated far cell has `active === false` and `inBand === false`, so nothing hides it. Do not implement that draft.
 
-Concretely, in `updateCells` the decision becomes:
+Keep the two radii that already exist in `src/world/cells.js`:
 
-- Compute `inBand = d2 <= deact2` (the deactivation radius) for the cell's XZ rectangle (rect-distance, preserved from current code).
-- If `cell.active === inBand`, nothing changes (no DOM/graph churn).
-- If `inBand` and not `cell.active`: set `cell.active = true` and show its records.
-- If not `inBand` and `cell.active`: set `cell.active = false` and hide its records.
-- **Adoption guard:** a cell that has never been evaluated (`!cell.everStreamed`) but is out of band is hidden *on this pass* (the fix), while content keeps its pre-streaming "visible" default only until the manager's first pass. To keep the existing gradual-adoption property (the title screen / first frame is not empty), the first pass that runs while no anchor is available (or before the manager is armed) still leaves records visible; once an anchor exists, the first evaluation is authoritative.
+- entry: `d2 <= active2` (`ACTIVE_DIST`, 2 cells)
+- exit: `d2 > deact2` (`DEACT_DIST`, 2.6 cells)
 
-A minimal `everStreamed` (or "adopted") flag per cell distinguishes "not yet judged" from "judged out of band", so the code never confuses the two and never needs a global "hide everything on frame 1" step.
+Add `cell.streamed`, default `false`, set true the first time that cell is evaluated against a finite anchor.
 
-### Why not simply drop the `active` guard?
+For every cell on a pass that has a finite anchor:
 
-Evaluating `inBand` every pass and hiding on the first out-of-band result IS the fix; the guard exists to avoid redundant `visible` writes. `setRecordShown` is already idempotent (`if (rec.shown === show) return;`), so evaluating the predicate every pass and calling the existing show/hide helpers costs one branch per cell per frame (there are ~121 cells) and is the simplest correct form. The per-cell `active` flag is kept for the shadow-radius hysteresis block and for diagnostics.
+1. If `!cell.streamed`, the first evaluation uses the **entry** radius. `d2 <= active2` shows and sets `active`. Otherwise hide and set `active = false`, even though `active` was already false. Then set `streamed = true`.
+2. If `cell.streamed`, use hysteresis. Hide only when `active && d2 > deact2`. Show only when `!active && d2 <= active2`. Between the radii, leave the previous state unchanged.
+3. A missing or non-finite anchor still returns before this decision and leaves registered content visible.
+
+`setRecordShown()` remains the only visibility writer. The shadow-radius block keeps its own `d2` comparisons and its 1.18x exit hysteresis; it is not gated on `streamed`.
+
+### Why not one in-band predicate?
+
+`d2 <= deact2` cannot express "enter at 2 cells, leave at 2.6". Using the exit radius on the first pass would also show cells in the hysteresis gap that the entry rule would hide. The `streamed` flag is what lets the first pass hide a cell whose `active` flag is still false without collapsing later hysteresis.
+
+`setRecordShown` is already idempotent, so repeating the decision every pass does not churn the scene graph. There are on the order of 121 cells.
 
 ### Alternatives considered
 

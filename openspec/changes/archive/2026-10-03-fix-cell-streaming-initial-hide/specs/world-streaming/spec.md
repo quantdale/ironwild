@@ -6,7 +6,7 @@ Defines how the browser game's spatial cell streaming manager decides which regi
 
 ### Requirement: Out-of-band cells reach the hidden state on the first streaming pass
 
-The streaming manager SHALL be able to drive a registered cell from its initial registered-and-visible state directly to a hidden state during the first streaming evaluation, without requiring the cell to have first passed through the "active" state. A cell whose bounding region lies outside the deactivation radius at the first evaluation MUST end that pass hidden, and its registered records' visibility flags MUST be set to hidden.
+The streaming manager SHALL be able to drive a registered cell from its initial registered-and-visible state directly to a hidden state during the first streaming evaluation, without requiring the cell to have first passed through the "active" state. A cell outside the entry radius on that first evaluation SHALL end the pass hidden. The wider exit radius governs only cells that have already been shown.
 
 #### Scenario: Freshly registered far cell is hidden on first evaluation
 - **WHEN** a content batch is registered into a cell that is far from the streaming anchor, and the streaming manager performs its first evaluation
@@ -21,18 +21,24 @@ The streaming manager SHALL be able to drive a registered cell from its initial 
 - **WHEN** a cell has never been in band and the anchor moves far enough that the cell is now outside the deactivation radius
 - **THEN** the cell's registered records are set to hidden (the manager does not require a prior "active" transition to hide them)
 
-### Requirement: Visibility and active-state are consistent invariants
+### Requirement: Visibility follows entry and exit hysteresis
 
-For every registered, non-retired cell record, the record's visible flag SHALL be true if and only if its cell is currently within the activation band. The manager SHALL evaluate the deactivation branch for every cell on every pass, not only for cells already marked active, so no cell can remain visible while out of band.
+The manager SHALL keep distinct entry and exit radii. On a cell's first evaluation against a valid anchor, records SHALL be shown only when the anchor is within the entry radius and SHALL be hidden otherwise, including when the cell has never been marked active. After that evaluation, a shown cell SHALL remain shown until the anchor passes the wider exit radius, and a hidden cell SHALL remain hidden until the anchor enters the entry radius. Hiding SHALL NOT require a prior active transition.
 
 #### Scenario: Counter agrees with visibility
-- **WHEN** the streaming manager reports its counters after one or more evaluations
+- **WHEN** the streaming manager reports its counters
 - **THEN** the reported active count equals the number of registered, non-retired records whose visible flag is true
 - **AND** the reported registered count equals the number of live (non-retired) records
+- **AND** before the first evaluation, pre-streaming parity leaves registered content visible and the active count agrees with that shown count
 
-#### Scenario: No permanently visible out-of-band cell
-- **WHEN** a full pass runs with a single anchor
-- **THEN** every cell outside the deactivation radius has its records hidden
+#### Scenario: No permanently visible cell beyond the exit radius
+- **WHEN** a full pass runs with a single valid anchor
+- **THEN** every cell outside the exit radius has its records hidden
+
+#### Scenario: The hysteresis band does not collapse to one radius
+- **WHEN** a cell has already been evaluated and the anchor then sits between the entry radius and the wider exit radius
+- **THEN** a cell that was visible stays visible
+- **AND** a cell that was hidden stays hidden
 
 ### Requirement: Adoption is gradual, not an all-hidden flash
 

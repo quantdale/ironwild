@@ -11,10 +11,10 @@ Every other accumulator in the project is explicitly guarded (`MAX_TICKS_PER_FRA
 
 ## What Changes
 
-- **State and enforce the `cur < next` invariant at every entry point**, not only in the save loader: `createXp()` should establish it at boot alongside the existing per-field normalization.
+- **Establish `cur < next` at the one-shot boot normalizer and on every return from `grantXp()`.** `createXp()` runs once and does not watch later writers. The loop itself must leave `cur < next`, including when `MAX_LEVEL` stops advancement. Do not claim this covers every future writer.
 - **Bound the level-up loop.** The loop that carries XP across level thresholds must have a finite iteration bound, matching the guard style already used elsewhere in the project, so a single grant can never spend unbounded time or emit unbounded events regardless of how the invariant was reached.
 - **Preserve legitimate multi-level grants.** A normal grant that legitimately crosses several thresholds (a large reward, a streak bonus) must still award every threshold crossed — the bound must not truncate normal play.
-- **Honor the existing `MAX_LEVEL` ceiling** rather than introducing a second, competing cap for level advancement.
+- **Honor the existing `MAX_LEVEL` ceiling** rather than introducing a second cap. At that ceiling, do not increment level or grant another skill point; discard excess XP so `cur` remains below `next`. Stopping the increment without that clamp would leave the loop condition true.
 - **Add regression coverage** for the boot-time invariant, the loop bound, and the existing normal cases.
 - No change to the XP curve, the reward amounts, or the leveling rewards themselves.
 

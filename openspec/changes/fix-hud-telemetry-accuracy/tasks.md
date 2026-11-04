@@ -27,7 +27,7 @@ This change edits four shared files. Sibling changes that also touch them:
 
 ## 3. Exclude gap frames instead of truncating them
 
-- [ ] 3.1 In `src/systems/perf.js`, replace the value clamp `Math.min(dt * 1000, DT_CLAMP_MS)` with an eligibility test against a gap threshold (use the same 0.25 s boundary as `src/systems/dynres.js DT_CLAMP_S` so both subsystems agree on what a gap is).
+- [ ] 3.1 In `src/systems/perf.js`, stop clamping stored samples with `Math.min(dt * 1000, DT_CLAMP_MS)`. Store a finite positive sample at its true duration when it is at or below 2000 ms. Exclude non-finite, non-positive, and above-2000 ms samples. Do not reuse `dynres.js`'s 0.25 s controller cutoff; that cutoff would reject the 900 ms hitch this change must report. Leave `dynres.js` behavior unchanged.
 - [ ] 3.2 When a sample is excluded, do not push it into the ring; increment a new `excludedFrames` counter and leave the ring and its running mean untouched (correct incremental mean maintenance when nothing is evicted).
 - [ ] 3.3 Treat a non-finite or non-positive delta as excluded rather than stored, and assert this in tests so a NaN can never poison the distribution.
 - [ ] 3.4 Confirm `recomputeFrameStats()` needs no change: it already reads the ring contents and its `sumMs` bookkeeping is maintained at push time.
@@ -52,9 +52,9 @@ This change edits four shared files. Sibling changes that also touch them:
 ## 6. Unit coverage
 
 - [ ] 6.1 Extend `tests/unit/perf-dynres.test.js` (existing harness: `vi.resetModules()` + dynamic import, stub renderer/composer):
-  - a delta above the gap threshold is not pushed into the ring and increments `excludedFrames`;
-  - a 900 ms frame produces a p99 of 900, not 250 (proves the saturation is gone);
-  - a NaN or zero delta is excluded, not stored;
+  - a 900 ms frame is stored and produces a p99 of 900, not 250;
+  - a delta above 2000 ms is not pushed into the ring and increments `excludedFrames`;
+  - a NaN, zero, or negative delta is excluded, not stored;
   - a normal stream of frames produces zero exclusions.
 - [ ] 6.2 Add a case asserting `report.scene.arrows` is 0 for an untouched arrow pool, and that `arrowsPool` still reports the capacity.
 - [ ] 6.3 Add a case asserting `hasGpuInfo === false` and gpu fields are `null` when `renderer.info` is missing (not stale zeros).
@@ -72,7 +72,7 @@ This change edits four shared files. Sibling changes that also touch them:
 
 - [ ] 8.1 Do not rewrite `docs/perf/baseline-45cfa51-inteluhd.txt`; add a short header note (or a companion file) stating that its p99 is the pre-fix clamp value and its `arrows` column is pool size, so it must not be used as a regression baseline.
 - [ ] 8.2 After the fix lands, run `node scripts/perf-capture.mjs` (with `IW_E2E_GPU=1` for hardware GL if available, else record the software-GL label) and commit the new capture with commit SHA, renderer, and the new field set, following the existing baseline file's attribution format.
-- [ ] 8.3 In the new capture, confirm the p99 is not equal to the gap threshold and that the `arrows` column differs between scenarios (proving the metric is now live).
+- [ ] 8.3 In the new capture, confirm p99 is not pinned to 250 and that the `arrows` column differs between scenarios. A p99 of 2000 would mean the gap ceiling was stored; that is still a failed capture.
 
 ## 9. Documentation
 

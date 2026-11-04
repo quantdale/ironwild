@@ -19,10 +19,11 @@ Also: `tests/e2e/asset-pipeline.spec.js` is extended by this change; `gate-asset
 
 ## 2. Drive attack telegraphs through the animator
 
-- [ ] 2.1 In `src/machines/ai.js`, call `m.animator.playAttack('<move>')` when each per-type attack enters its anticipation phase, using the `ATTACK_WINDOWS` keys already defined in `src/anim/machineAnim.js` (`lunge`, `swipeL`, `swipeR`, `kick`, `dash`, `bolt`, `dive`, `roll`, `crush`, `tail`). Cover `skitterAttack`, `rendclawAttack`, `bramblehornAttack`, `ironmawAttack`, `duskwingAttack`, `bulwarkAttack`, `monarchTick`/`monarchStomp`/`monarchTail`, and `mirefangTick`/`startMireAmbush`.
+- [ ] 2.1 In `src/machines/ai.js`, call `m.animator.playAttack('<move>')` when each per-type attack enters its anticipation phase. Use the existing `ATTACK_WINDOWS` keys. Cover `skitterAttack`, `rendclawAttack`, `bramblehornAttack`, `ironmawAttack`, `duskwingAttack`, `bulwarkAttack`, `monarchTick`/`monarchStomp`/`monarchTail`, and `mirefangTick`/`startMireAmbush`.
 - [ ] 2.2 Wrap each call in the same isolation style already used in `updateMachineAnimators` (try/catch + console.error) so a broken authored rig can never abort the AI step.
 - [ ] 2.3 Do NOT change where damage is applied. `ai.js` keeps full damage authority; the animator only describes and plays the timing. Confirm the returned `anticipation`/`active`/`recovery` windows match the AI's own phase durations for each type, and adjust `ATTACK_WINDOWS` values if the AI has drifted.
 - [ ] 2.4 Keep the existing procedural pose channels (`a.crouch`, `a.rear`, `a.roar`, `a.lean`, `a.rollSpin`, jaw/grinder) untouched so procedural machines are byte-for-byte unchanged.
+- [ ] 2.5 When the authored rig has a matching attack clip, that clip must enter a running state. Skitter's `act_skitter_lunge` is the current positive case. Ironmaw and duskwing currently have no attack clip. For those attacks, `playAttack` must still show an anticipation on the authored root for the anticipation window. Do not treat hidden procedural pose channels as that anticipation, and do not refuse authored install solely because an attack clip is missing.
 
 ## 3. Drive hit reactions and death performance
 
@@ -62,3 +63,4 @@ Also: `tests/e2e/asset-pipeline.spec.js` is extended by this change; `gate-asset
 - [ ] 7.2 Re-run the runtime probe used during this audit (authored-root mesh enumeration + mixer action sampling + before/after break comparison) and confirm: (a) `playAttack`/`playHitReact`/`playDeath` are non-zero under forced combat, (b) the authored mixer leaves `loc_idle` during an attack, and (c) breaking a weak point measurably changes the rendered emissive.
 - [ ] 7.3 Update the header comments in `src/anim/machineAnim.js` and `src/machines/ai.js` to state that gameplay owns damage authority and the animator owns presentation timing, and that the two must be invoked from the AI/damage paths.
 - [ ] 7.4 Note in `docs/BALANCE.md` only if the weak-point rebinding changes effective hit geometry in a way that affects the documented TTK tables; otherwise leave balance numbers untouched.
+- [ ] 7.5 Record the current authored skitter marker color (`0xFF6F59`) as a deliberate deviation from procedural cyan `0x59e3ff` in the manifest or animator header. Do not recolor the asset in this change. Confirm the colorblind weak-point cue still identifies the point without depending on that hue.

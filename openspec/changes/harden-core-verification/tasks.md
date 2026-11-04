@@ -4,7 +4,7 @@
 
 This change edits `.github/workflows/ci.yml`, `package.json`, and `README.md`. Sibling changes that also touch them:
 
-- **`gate-assets-in-ci`** adds its own steps to the same CI workflow (dependency audit, asset validation) and its own `package.json` script aliases plus a `verify` edit. **This is the highest-conflict pairing in the set** — two changes appending steps to one workflow file and editing one scripts block. Sequence them explicitly and keep them in separate commits; do not have two agents open `ci.yml` at once.
+- **`gate-assets-in-ci` owns the CI audit step, the CI asset-validation step, and the `assets:validate` insertion into `verify`.** This change must not add those steps or edit that part of `verify`. Its only `package.json` edit is the separate `test:coverage` script. If both changes are applied, do them in separate commits and re-read `package.json` first.
 - **`sync-project-documentation`** edits `README.md` (layout block, quality gates, testing section). Task 1.3 below tells that change to defer to this one for the coverage paragraph; keep the same division so the two do not both rewrite it.
 - **`enforce-permadeath-run-model`** extends the save unit suite this change creates (see its task 4.1). Apply this change first so the lifecycle tests have a suite to extend.
 
@@ -13,14 +13,14 @@ This change edits `.github/workflows/ci.yml`, `package.json`, and `README.md`. S
 ## 1. Save system unit coverage
 
 - [ ] 1.1 Create `tests/unit/save-system.test.js` using the `vi.resetModules()` + dynamic-import pattern; stub `../core/input.js` (save.js imports `Input` for the quicksave poll) and provide a live `G.player`.
-- [ ] 1.2 Round-trip: seed player pos/hp/stamina, inventory, skills, timeOfDay, mapRevealed, quests (incl. `genCount`), xp, and bestiary → `saveGame()` → mutate/reset `G` → `loadGame()` → assert every field is restored.
-- [ ] 1.3 Version gate: `v: 1` and `v: 99` are rejected; `v: 2` and `v: 3` are accepted (pins the documented v2→v3 backward-compat promise).
-- [ ] 1.4 Position guard: reject non-array, length < 3, non-finite entries, and magnitude beyond `CONFIG.worldSize`; assert `loadGame()` returns `false` and does not partially mutate `G`.
+- [ ] 1.2 Round-trip: seed player pos/hp/stamina, inventory, skills, timeOfDay, mapRevealed, quests (incl. `genCount`), xp, bestiary, and expedition → `saveGame()` → mutate/reset `G` → `loadGame()` → assert every field is restored. Keep `tests/unit/save.test.js` passing; extend it or add a sibling rather than replacing its hostile-input cases.
+- [ ] 1.3 Version gate: reject `v: 1` and `v: 99`; accept `v: 2`, `v: 3`, and the current `v: 4`. Do not write a test that treats v4 as invalid.
+- [ ] 1.4 Position guard: reject non-array, length < 3, non-finite entries, `Math.hypot(x, z) > CONFIG.playRadius + 12`, `y < -48`, and `y > 220`. Assert `loadGame()` returns `false` and does not partially mutate `G`. Do not assert a `CONFIG.worldSize` bound; that is not the current check.
 - [ ] 1.5 Corrupt JSON in storage → `loadGame()` returns `false`, throws nothing, and leaves `G` untouched.
 - [ ] 1.6 `hp: 0` and negative `hp` load as at least 1 ("never load back dead" floor).
 - [ ] 1.7 A tampered/stale `xp.next` in the save is ignored and recomputed from the level curve via `nextFor`.
 - [ ] 1.8 Quest slots: a record failing `isValidQuest` is dropped to `null`; a valid record is restored and re-emits `questUpdate`.
-- [ ] 1.9 Inventory: invalid/non-finite values ignored, valid finite values applied, unknown keys ignored.
+- [ ] 1.9 Inventory: non-finite values ignored, unknown keys ignored, and finite values clamped to the caps already implemented in `restoreInventory` (resources and skill points 9999, medicine 99, armor 0..2, arrows at the live max). Do not expect `1e9` to round-trip; `tests/unit/save.test.js` already locks the caps.
 - [ ] 1.10 `hasSave()` / `clearSave()` happy paths and the storage-unavailable (throwing) path.
 - [ ] 1.11 `updateSave()`: autosave fires at `AUTOSAVE_INTERVAL`; the pause rising edge snapshots once; `quicksave` action triggers a manual save; the interval resets even when the write fails.
 
@@ -82,12 +82,11 @@ This change edits `.github/workflows/ci.yml`, `package.json`, and `README.md`. S
 
 ## 7. CI gates
 
-- [ ] 7.1 Add a `Dependency audit` step to `.github/workflows/ci.yml` running `npm audit --audit-level=high`; ensure it fails the job on a high/critical advisory.
-- [ ] 7.2 Add an `Asset validation` step running `npm run assets:validate` (it must stay green against the five authored GLBs and their provenance sidecars).
-- [ ] 7.3 Add `@vitest/coverage-v8` pinned to the installed vitest major as a devDependency and a `test:coverage` script; add the coverage command to `npm run verify`.
-- [ ] 7.4 Publish the coverage summary and the Playwright report as CI artifacts on completion (Playwright already uploads on failure only).
-- [ ] 7.5 Do NOT add a hard coverage percentage gate in this change; record the measured baseline in the PR description instead.
-- [ ] 7.6 Confirm the new steps do not lengthen the E2E job or reorder the existing lint → unit → build → e2e sequence.
+- [ ] 7.1 Do **not** add a dependency-audit step or an asset-validation step to `.github/workflows/ci.yml`. Those steps are owned exclusively by `gate-assets-in-ci`.
+- [ ] 7.2 Add `@vitest/coverage-v8`, pinned to the installed Vitest major, and a `test:coverage` script. Do not add that script to `verify`.
+- [ ] 7.3 Publish the coverage summary as a CI artifact. Do not change the existing Playwright failure-upload step except to avoid a name clash.
+- [ ] 7.4 Do not add a hard coverage percentage gate. Record the measured baseline in the change notes.
+- [ ] 7.5 Confirm this change does not reorder lint → unit → build → e2e and does not lengthen the E2E job.
 
 ## 8. Documentation
 
@@ -99,7 +98,7 @@ This change edits `.github/workflows/ci.yml`, `package.json`, and `README.md`. S
 ## 9. Final verification
 
 - [ ] 9.1 `npm run lint` clean.
-- [ ] 9.2 `npm test` — all pre-existing 336 tests still pass, plus the new suites.
+- [ ] 9.2 `npm test` — all pre-existing tests still pass, plus the new suites. Do not hard-code 336; the merged tree already has 348.
 - [ ] 9.3 `npm run assets:validate` exits 0.
 - [ ] 9.4 `npm run build` succeeds.
 - [ ] 9.5 `npx playwright test` — full suite green, console clean.

@@ -898,6 +898,7 @@ function boot() {
     bus,
     renderer,
     composer,
+    scene,
     dynres: dynresMod,
     perf: perfMod,
   };

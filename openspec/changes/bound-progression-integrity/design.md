@@ -115,9 +115,20 @@ On hitting the cap: rather than silently truncating (which would corrupt the lev
 
 `createXp()` should establish `cur < next` alongside the per-field normalization it already performs — three lines, no new concept, and it makes the invariant hold at every entry point that currently exists. Do **not** touch `save.js`: its `bounded()` clamp is already correct.
 
-### 3. Reuse `MAX_LEVEL` rather than adding a second ceiling
+### 3. Reuse `MAX_LEVEL` and define the overflow
 
-`MAX_LEVEL` already exists in `save.js` (currently 100). Applying it in `grantXp` gives the loop a hard, already-agreed bound on level advancement rather than introducing a competing constant. Note it currently lives in `save.js`, so implementing this either moves it to `state.js`/`xp.js` (preferred — it is progression tuning, not persistence) or imports it. Flag this choice in the implementation notes.
+`MAX_LEVEL` already exists in `save.js` (currently 100). Applying it in `grantXp` gives level advancement a hard, already-agreed ceiling. Prefer moving the constant to `state.js` `CONFIG` or `xp.js` so progression does not import it from the save module. Record the choice.
+
+When `level` is already at the ceiling, or the loop would pass it:
+
+- do not increment `level`;
+- do not grant another skill point;
+- set `cur` to `next - 1` (or otherwise into `[0, next)`);
+- then return.
+
+Stopping the increment alone is not enough. `next` would stay constant while `cur >= next`, so the next `grantXp()` would loop until the iteration cap. The cap is the backstop; the ceiling clamp is the normal exit.
+
+`createXp()` is one-shot. Its clamp covers boot initialization only. It does not subscribe to later writers, and the spec must not say that it does.
 
 ### The invariant to state
 
@@ -166,7 +177,7 @@ play:   grantXp(amount)
 
 **The save loader (`src/systems/save.js`).** `loadGame` already clamps `level` to `1..MAX_LEVEL` and `cur` to `0..next-1` via `bounded()`. That correctly closes the tampered-save trigger and correctly derives `next` from `level`. Re-implementing or "hardening" it here would be redundant work against an existing correct guard. **Read the current implementation before starting — this section may be out of date if the loader is changed again.**
 
-**Unbounded inventory restore.** `loadGame` restores the inventory with only a finiteness check, so a tampered save can set `arrows: 1e9` or `maxArrows: 1e9`. Also out of scope: no loop or accumulator consumes those values, so the worst outcome is a wrong-looking HUD readout (`1000000000 / 60`) in a save the player hand-edited — no stall, no corruption, no security consequence. Recorded here so the audit trail shows it was considered rather than missed. If a future change introduces a loop, sorting, or allocation driven by an inventory value, that value must be bounded at that point.
+**Inventory restore.** This is no longer unbounded. `restoreInventory()` already caps resources and skill points at 9999, medicine at 99, armor at 0..2, and arrow counts at the live maxima. `tests/unit/save.test.js` locks that behavior. Leave it out of this change; do not describe it as an open finiteness-only hole.
 
 ## Rollout / compatibility
 
@@ -175,7 +186,7 @@ Purely defensive. Legitimate saves (`cur < next`, which every save written by th
 ## Testing strategy
 
 - Unit (`src/systems/xp.js`; extend the XP suite from `harden-core-verification` if it landed, otherwise create `tests/unit/xp-integrity.test.js`):
-  - a restore-equivalent state of `{ level: 1, cur: 1e12 }` is clamped to `cur < nextFor(1)` by `createXp` and by `loadGame`;
+  - a boot-equivalent state of `{ level: 1, cur: 1e12 }` is clamped to `cur < nextFor(1)` by `createXp`; the load path is already clamped and is only regression-locked;
   - `grantXp` on such a state completes and emits a bounded number of `levelUp` events (assert the count is at or below the documented cap, and that the call returns);
   - a legitimate multi-level grant (e.g. `grantXp` large enough to cross 3 thresholds) awards exactly 3 level increments, 3 skill points, and leaves `cur` correct;
   - `grantXp` bringing `cur` exactly to `next` awards exactly 1 level-up and leaves `cur === 0`;

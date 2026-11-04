@@ -6,7 +6,7 @@ The repository's documentation has drifted from the code in ways that actively m
 
 - **Refresh the README's project layout** so it lists every current source directory, the tooling scripts, and the asset locations, matching the actual tree.
 - **Update the README's quality-gate list** to include the asset validator, and state the test-strategy split (unit vs. E2E) accurately.
-- **Correct the false innerHTML claim** in `ui/menus.js` so the codebase comment matches reality, and either adopt the DOMParser pattern in the three call sites or state the actual policy honestly.
+- **Correct the false innerHTML claim** in `ui/menus.js`. There are four direct assignments, not three: `settings.js`, `hud.js`, `quests.js`, and `systems/expedition.js`. State the actual static-template policy at each site. Do not convert them in this change.
 - **Label the architecture documents as historical design records** with a one-line status note each, so a reader knows the current contracts are documented elsewhere.
 - **Add an index/entry point** that ties the strategic planning documents and the OpenSpec change set together, so planned work has one navigable home.
 - **Add a short note on cross-module global-state ownership**, since several `G.*` fields are declared outside `core/state.js` despite that file's header claiming it owns cross-module state.

@@ -65,8 +65,14 @@ A machine that is about to attack SHALL present a readable anticipation before i
 
 #### Scenario: Missing attack animation still telegraphs
 - **WHEN** an authored machine begins an attack for which no matching animation exists
-- **THEN** the attack still presents a visible anticipation before damage lands
+- **THEN** a visible anticipation is still presented on the rig that is being drawn
+- **AND** that anticipation does not depend on procedural meshes that have been hidden
 - **AND** the declared anticipation/active/recovery timings still bound the attack
+
+#### Scenario: An authored color deviation is recorded rather than guessed
+- **WHEN** an authored weak-point marker does not use the procedural cyan weak-point color
+- **THEN** the deviation is recorded with the asset definition
+- **AND** a non-color cue can still identify the weak point
 
 #### Scenario: Procedural telegraphs are unaffected
 - **WHEN** a procedural machine begins an attack

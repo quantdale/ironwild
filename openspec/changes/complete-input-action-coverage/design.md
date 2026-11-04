@@ -11,14 +11,16 @@
 Comparing the two tables mechanically:
 
 ```text
-DEFAULT_BINDINGS (20): forward,back,left,right,jump,dodge,sprint,crouch,interact,
-                       focus,heal,quicksave,melee,arrowToggle,aim,fire,
+DEFAULT_BINDINGS (21): forward,back,left,right,jump,dodge,sprint,crouch,interact,
+                       focus,heal,quicksave,melee,arrowToggle,map,aim,fire,
                        uinavUp,uinavDown,uinavConfirm,uinavCancel
 PAD_ACTIONS      (16): forward,back,left,right,jump,dodge,interact,crouch,
                        sprint,focus,aim,fire,uinavUp,uinavDown,uinavConfirm,uinavCancel
 
-NO GAMEPAD SOURCE: heal,quicksave,melee,arrowToggle
+NO GAMEPAD SOURCE: heal, quicksave, melee, arrowToggle, map
 ```
+
+`PAD_BUTTONS` currently has A/B/X/Y, LB/RB, LT/RT, START, and the four D-pad indices. It does not define Select (8), L3 (10), or R3 (11). The earlier note that those indices are "already present" is wrong for Select and R3.
 
 `heal` (`KeyH`), `quicksave` (`KeyP`), `melee` (`KeyF`, the spear) and `arrowToggle` (`KeyX`, standard↔fire arrows) are keyboard-only. `arrowToggle` also has a mouse-wheel fallback in `player/bow.js updateBow` (a 100-unit wheel notch swaps type with a cooldown), so a pad user can reach it indirectly — but not via a button, and the other three have no path at all. The pad's remaining buttons are: D-pad (12–15, used for UI nav), face A/B/X/Y (jump/dodge/interact/crouch), LB/RB (focus/sprint), LT/RT (fire/aim), START (pause pulse).
 
@@ -33,14 +35,15 @@ There are exactly four unclaimed face/shoulder inputs that fit naturally and are
 
 The four standard-mapping buttons still free after the existing 10 mappings are: D-pad Up/Down/Left/Right (only Up/Down are used for UI nav, and only in menu contexts), and the START/Back/Select pair (9/8).
 
-Resolution chosen (keeps face buttons semantic and avoids mode-dependent conflicts):
+Resolution chosen:
 
-- `heal` → **D-pad Up** (12). Low-frequency consumable; conflicts only with UI nav Up, and UI nav is not polled while gameplay is active (`menus.js` only reads uinav* through the settings rebind UI; verify no runtime consumer reads `uinavUp` during play).
-- `melee` → **Left Bumper held with Right Stick click** is over-engineered. Instead: **Right Stick press (button 11, "R3")** — a dedicated, unused standard-mapping input, semantically "secondary action", never used for locomotion or aim (right stick is analog look, its *click* is unused).
-- `arrowToggle` → **Select/Back (button 8)**, unused, semantically "cycle loadout".
-- `quicksave` → **D-pad Left (14)**, low frequency, unused in gameplay (D-pad Left/Right are not bound to any gameplay action today).
+- `melee` → **R3 (11)**. Add `R3` to `PAD_BUTTONS`. No navigation conflict.
+- `arrowToggle` → **Select (8)**. Add `SELECT` to `PAD_BUTTONS`. No navigation conflict.
+- `heal` → **D-pad Up (12)**.
+- `quicksave` → **D-pad Left (14)**.
+- `map` → **D-pad Right (15)**.
 
-This requires no changes to existing mappings and no chord/modifier logic. If a later audit finds `uinavUp` is read during gameplay, `heal` moves to button 8 and `arrowToggle` to D-pad Up.
+No current gameplay code reads `uinavUp`. The D-pad still produces `state.nav` edges, and menus can be open while the pad is polled. Therefore `heal`, `quicksave`, and `map` must be suppressed while a panel, the pause menu, or the settings modal is open. Face, shoulder, stick-click, and Select bindings are not suppressed by that rule. Do not move `heal` onto Select; Select is `arrowToggle`.
 
 ### Gap 2 — phantom Escape from a disconnected pad
 

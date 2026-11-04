@@ -74,14 +74,14 @@ Remediation path, in order:
 
 ### 2. Asset-validation gate
 
-Add to CI, in the fast job before the build:
+Add to CI, in the fast job before the build. This is the only change allowed to add these steps:
 
 ```yaml
 - name: Asset validation
   run: npm run assets:validate
 ```
 
-and add `assets:validate` to the `verify` script so the local gate matches CI:
+Add `assets:validate` to `verify` so the local gate matches CI. If a separate `test:coverage` script exists, leave it outside `verify`:
 
 ```
 "verify": "npm run lint && npm test && npm run assets:validate && npm run test:e2e"

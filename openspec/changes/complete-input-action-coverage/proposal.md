@@ -1,10 +1,10 @@
 ## Why
 
-The input layer has an action abstraction with rebinding and gamepad support, but it is only partially wired. Four gameplay actions — `heal`, `quicksave`, `melee`, `arrowToggle` — have **no gamepad mapping at all**, so a gamepad-only player cannot use medicine, quicksave, the spear, or switch arrow types. Separately, `input/gamepad.js` never resets its edge state when the pad disappears, which can leave a stuck `startEdge` that injects a phantom Escape into the frame loop. Finally, the panel keys (I / Tab / B) are polled as raw key codes in `ui/menus.js` and are not part of the rebindable action layer, so the "remappable controls" feature silently excludes the UI panels it is most likely to interfere with.
+The input layer has an action abstraction with rebinding and gamepad support, but it is only partially wired. On current `main`, `heal`, `quicksave`, `melee`, `arrowToggle`, and `map` have no `PAD_ACTIONS` entry. A gamepad-only player cannot use medicine, quicksave, the spear, switch arrow types, or open the frontier map. `map` is already an action; inventory, skills, and bestiary are still raw `KeyI` / `Tab` / `KeyB` polls. Separately, `input/gamepad.js` never resets its edge state when the pad disappears, which can leave a stuck `startEdge` that injects a phantom Escape into the frame loop.
 
 ## What Changes
 
-- **Give every gameplay action a gamepad source.** `heal`, `quicksave`, `melee`, and `arrowToggle` gain standard-mapping gamepad bindings so a controller-only player has full parity with keyboard+mouse. Existing bindings stay unchanged.
+- **Give the unmapped actions a gamepad source.** `heal`, `quicksave`, `melee`, `arrowToggle`, and the existing `map` action gain standard-mapping bindings. `PAD_BUTTONS` does not currently define Select (8) or R3 (11); add them. D-pad gameplay bindings must not fire while a panel, pause menu, or settings modal is open, because D-pad edges already feed UI navigation.
 - **Reset gamepad edge state on disconnect.** When no pad is found, `startEdge` and the button/nav edge maps must be cleared, so a pad unplugged mid-poll cannot keep injecting an Escape keypress every frame.
 - **Move panel intents into the action layer.** Inventory, skills, and bestiary toggles become named actions with default bindings and rebind rows, so panel keys participate in the same rebinding and persistence path as gameplay keys.
 - **Add regression coverage** for full action parity, edge reset on disconnect, and the phantom-Escape scenario.

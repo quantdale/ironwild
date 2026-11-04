@@ -4,11 +4,11 @@
 
 ### What the unit suite actually covers
 
-Scanning every `src/...` import across `tests/unit/*.test.js` (15 files, 336 tests, all green) yields:
+Scanning `tests/unit/` at `2ced7bd` (17 files, 348 tests) yields:
 
 | Covered | Not covered |
 | --- | --- |
-| `core/utils`, `core/events`, `core/state`, `core/input` (action layer) | `systems/save`, `systems/quests`, `systems/xp`, `systems/bestiary` |
+| `core/utils`, `core/events`, `core/state`, `core/input` (action layer) | `systems/quests`, `systems/xp`, `systems/bestiary` (no unit file) |
 | `world/terrain` | `world/props`, `world/cells`, `world/environment`, `world/weather`, `world/lod`, `world/landmark`, `world/materials` |
 | `combat/damage`, `combat/projectiles`, `combat/status` | `machines/machines`, `machines/ai` (only `machines/perception` is covered) |
 | `player/bow`, `player/spear` | `player/player`, `player/camera`, `player/hunterView` |
@@ -22,7 +22,14 @@ Scanning every `src/...` import across `tests/unit/*.test.js` (15 files, 336 tes
 
 > "Unit tests cover the deterministic core — RNG, event bus, damage/weak-point math, status timing, terrain generation, **XP, quests, bestiary, and save normalization (including corrupt-save handling)**."
 
-Four of those eight named areas have no unit test at all. `systems/save.js` is the sharpest case: it is the single most user-visible persistence contract in the game (localStorage `ironwild-save`, versioned schema v2→v3, backward compatibility promise, corrupt-data rejection), and it is defended only by `tests/e2e/save-continue.spec.js`, which asserts a position round-trip through a real browser. The version gate, the `pos` magnitude/finiteness guard, quest-record validation via `isValidQuest`, and the "never load back dead" floor are entirely unverified.
+XP, quests, and bestiary still have no unit file. Save is no longer uncovered: `tests/unit/save.test.js` rejects an out-of-world position before mutation, clamps hostile XP/inventory/quest counters, and normalizes a malformed expedition record. It does not cover a full happy-path round trip, version acceptance, or quest-record restoration. New save tests must extend that behavior, not restate the pre-merge loader.
+
+Current loader facts the new tests must pin:
+
+- `SAVE_VERSION` is 4. `loadGame()` accepts integer versions `2..4` and rejects anything below 2 or above 4.
+- Position is rejected when `Math.hypot(x, z) > CONFIG.playRadius + 12`, `y < -48`, or `y > 220`. It is not bounded by `CONFIG.worldSize`.
+- Inventory restore is already capped (`shards`/`wood`/`oil`/`hide`/`skillPoints` at 9999, medicine at 99, armor at 0..2, arrows at the live max). Do not write a test that expects an uncapped finite value to round-trip.
+- Expedition state is part of the v4 snapshot and is passed through `normalizeExpeditionState()`.
 
 ### CI gaps
 
@@ -52,14 +59,14 @@ This is a **characterization-test** change, not a behavior change. The rule: eve
 
 Requires mocking `../core/input.js` (save.js imports `Input` for the quicksave poll) and needs a live `G.player`. Cases:
 
-1. Round-trip: set player pos/hp/stamina, inventory, skills, timeOfDay, mapRevealed, quests, xp, bestiary → `saveGame()` → reset `G` → `loadGame()` → deep-equal on every field.
-2. Version gate: `v: 1` and `v: 99` are rejected (return `false`); `v: 2` and `v: 3` accepted.
-3. `pos` guard: missing array, length < 3, non-finite entry, and magnitude beyond `CONFIG.worldSize` are all rejected.
+1. Round-trip: set player pos/hp/stamina, inventory, skills, timeOfDay, mapRevealed, quests, xp, bestiary, and expedition → `saveGame()` → reset `G` → `loadGame()` → deep-equal on every persisted field.
+2. Version gate: `v: 1` and `v: 99` are rejected; `v: 2`, `v: 3`, and current `v: 4` are accepted.
+3. Position guard: missing array, length < 3, non-finite entry, `hypot(x, z) > CONFIG.playRadius + 12`, `y < -48`, or `y > 220` are rejected. Do not use `CONFIG.worldSize`.
 4. Corrupt JSON in storage → `loadGame()` returns `false`, no throw, no partial mutation of `G`.
 5. `hp` floor: `hp: 0` or negative loads as at least 1 (never dead on load).
 6. XP `next` is never trusted from the save; it is recomputed from the level curve.
 7. Quest slots: a malformed record is dropped to `null` (not left wedged), a valid one is restored and re-emits `questUpdate`.
-8. Unknown/invalid inventory values are ignored; valid finite numbers are applied.
+8. Unknown or non-finite inventory values are ignored; finite values are clamped to the caps already in `restoreInventory`.
 9. `hasSave()` / `clearSave()` behavior including storage-unavailable paths.
 
 #### `systems/quests.js`
@@ -103,17 +110,9 @@ Requires mocking `../core/input.js` (save.js imports `Input` for the quicksave p
 
 ### CI additions
 
-Add to `.github/workflows/ci.yml`, as separate fast steps before the E2E job:
+This change does **not** add the dependency-audit step or the asset-validation step. Those belong only to `gate-assets-in-ci`, which also owns inserting `assets:validate` into `verify`. Adding them here would make two changes append the same steps to `ci.yml` and rewrite the same script string.
 
-```yaml
-- name: Dependency audit
-  run: npm audit --audit-level=high
-
-- name: Asset validation
-  run: npm run assets:validate
-```
-
-Add a coverage script to `package.json` using vitest's built-in coverage (`@vitest/coverage-v8` as a devDependency) and publish the summary as a build artifact. Add the coverage command to `npm run verify`. Do **not** set a hard coverage threshold in this change — establish the measured baseline first, then set a ratchet in a follow-up (the directive's "no percentage theater" rule; a number nobody has agreed on is worse than none).
+Add a `test:coverage` script using `@vitest/coverage-v8`, pinned to the installed Vitest major. Do not fold that script into `verify` and do not set a coverage percentage gate. Measure first; ratchet later.
 
 ## Alternatives considered
 
@@ -128,7 +127,7 @@ Add a coverage script to `package.json` using vitest's built-in coverage (`@vite
 
 ## Testing strategy
 
-The change is validated by its own new tests plus the existing gates: `npm run lint`, `npm test` (existing 336 tests plus new ones), `npm run build`, `npm run assets:validate`, `npm audit --audit-level=high`, and the unchanged Playwright suite.
+The change is validated by its own new tests plus `npm run lint`, `npm test`, `npm run build`, and the unchanged Playwright suite. The current suite is 17 files and 348 tests; do not treat 336 as the baseline. Dependency audit and asset validation are run by `gate-assets-in-ci`, not by this change.
 
 ## Rollout
 

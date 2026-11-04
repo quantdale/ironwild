@@ -9,12 +9,19 @@ Defines the input action layer's observable contract: which gameplay and panel i
 Every gameplay action that is reachable from keyboard and mouse SHALL also be reachable from a standard-mapping gamepad while a pad is connected. No gameplay action SHALL be keyboard-only.
 
 #### Scenario: All gameplay actions have a pad source
-- **WHEN** the set of defined gameplay actions is compared against the set of actions with a gamepad source
-- **THEN** every gameplay action has a gamepad source
+- **WHEN** the defined movement, combat, consumable, quicksave, and map actions are compared with their gamepad sources
+- **THEN** each of those actions has a gamepad source
+- **AND** inventory, skills, and bestiary may remain keyboard-rebindable panel actions without a new pad binding
+- **AND** pause remains reachable from the pad Start button
 
 #### Scenario: Unmapped actions before the change are now mapped
-- **WHEN** a player holds the gamepad input bound to healing, quicksaving, spear melee, and arrow-type switching
-- **THEN** the corresponding gameplay action is reported as held for that frame
+- **WHEN** a player holds the gamepad input bound to healing, quicksaving, spear melee, arrow-type switching, or the frontier map during active play
+- **THEN** the corresponding action is reported as held for that frame
+
+#### Scenario: D-pad gameplay bindings yield to an open interface
+- **WHEN** a panel, the pause menu, or the settings modal is open
+- **THEN** D-pad gameplay actions are not reported as held
+- **AND** D-pad UI navigation still reports its own edges
 
 #### Scenario: Gamepad parity does not change keyboard defaults
 - **WHEN** no gamepad is connected
