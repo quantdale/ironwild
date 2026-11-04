@@ -435,8 +435,9 @@ function onXpGain() {
  * the arc fill itself stays polled from p.drawT in updateHUD because power
  * advances continuously while bowState only fires on transitions. Invalid or
  * malformed payloads keep the last known phase - a bad event must never blank
- * or corrupt the crosshair. Classes are static (no keyframes), so users with
- * reduceFlashing get no additional motion.
+ * or corrupt the crosshair. The emphasis classes are keyframe-free by
+ * construction (no @keyframes, no transitions), so they add no motion for
+ * anyone - reduceFlashing governs the flashing layers, not these.
  */
 function onBowState(b) {
   const s = b && typeof b.state === 'string' ? b.state : null;
@@ -782,9 +783,9 @@ function injectStyles() {
 .iw-retick{stroke:#59e3ff;stroke-width:2;}
 
 /* v5 gap 3B: 'bowState' emphasis classes on #iw-xh, driven by hud.js's bus
-   consumer. Static styles only - no keyframes - so reduceFlashing gains no
-   extra motion; high-contrast mode swaps the hue cue for a thicker achromatic
-   outline per the a11y publishing contract. */
+   consumer. Static styles only - no keyframes - so these classes add no
+   motion for any user; high-contrast mode swaps the hue cue for a thicker
+   achromatic outline per the a11y publishing contract. */
 #iw-xh.drawing .iw-retick{stroke:#aef0ff;}
 #iw-xh.full .iw-retarc{stroke:#8ff2ff;}
 #iw-xh.full .iw-retick{stroke:#ffffff;}
@@ -834,6 +835,21 @@ body.iw-high-contrast #iw-xh.full .iw-retbg{stroke:rgba(255,255,255,.55);}
   background:radial-gradient(ellipse at center,transparent 52%,rgba(160,20,20,.55) 100%);}
 #iw-vig.on{animation:iwvig 1.15s ease-in-out infinite;}
 @keyframes iwvig{0%,100%{opacity:.25;}50%{opacity:.85;}}
+
+/* Reduced flashing (a11y 'reduceFlashing' -> body.iw-reduce-flashing): stops
+   the animation of every flashing/pulsing layer while keeping its static
+   form. The low-hp vignette stays a steady, clearly visible warning (the
+   pulse is the flashing risk, not the warning itself); the grain and
+   cinematic textures remain as still overlays. These selectors are strictly
+   more specific than the base rules above (body class prefix), so no
+   !important is needed - the cascade resolves in favor of this block. The
+   start screen 'iwpulse' affordance is deliberately untouched (pre-run only).
+   The weather lightning flash is imperative, not CSS: world/weather.js clamps
+   its flashLevel range when the same preference is on. */
+body.iw-reduce-flashing #iw-vig.on{animation:none;opacity:.55;}
+body.iw-reduce-flashing #iw-grain{animation:none;}
+body.iw-reduce-flashing #iw-xpbar.pulse{animation:none;}
+body.iw-reduce-flashing .iw-qslot.done{animation:none;}
 
 #iw-obj{position:absolute;top:16px;left:20px;font-size:12px;letter-spacing:1.5px;
   text-transform:uppercase;color:rgba(230,240,245,.75);transition:opacity 2.5s;}

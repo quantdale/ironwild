@@ -11,6 +11,8 @@
 // territory (npm run test:e2e) and deliberately not duplicated here.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const UI_SCALE_MIN = 0.85; // mirrors a11y.js clampNum band
 const UI_SCALE_MAX = 1.3;
@@ -24,6 +26,96 @@ async function loadBus() {
   vi.resetModules();
   return import('../../src/core/events.js');
 }
+
+// The injected stylesheet (injectStyles()) is a template literal inside
+// hud.js, which builds all of its DOM inside createHUD() - not exercisable
+// under vitest's node environment. Pin its contract by reading the module
+// source text instead: a selector rename must break these tests rather than
+// silently disable a user's reduceFlashing setting (design.md mitigation).
+const HUD_SRC = readFileSync(
+  fileURLToPath(new URL('../../src/ui/hud.js', import.meta.url)),
+  'utf8',
+);
+// The .iw-qslot.done flash rule is authored in systems/quests.js (its own
+// <style>), while the reduceFlashing override lives in hud.js's stylesheet;
+// both are author stylesheets so the cascade applies. Pin the base rule at
+// its real source so a rename there breaks this suite too.
+const QUESTS_SRC = readFileSync(
+  fileURLToPath(new URL('../../src/systems/quests.js', import.meta.url)),
+  'utf8',
+);
+
+describe('reduced-flashing stylesheet contract (body.iw-reduce-flashing)', () => {
+  const REDUCED_RULE = /body\.iw-reduce-flashing\s+([^{}]+)\{([^{}]*)\}/g;
+
+  function ruleFor(selectorFragment) {
+    const rules = [...HUD_SRC.matchAll(REDUCED_RULE)]
+      .map((m) => ({ selectors: m[1], body: m[2] }));
+    return rules.filter((r) => r.selectors.includes(selectorFragment));
+  }
+
+  it('disables the animation on every flashing layer the change covers', () => {
+    // #iw-vig.on (low-hp pulse), #iw-grain (grain translation),
+    // #iw-xpbar.pulse (xp flash), .iw-qslot.done (contract-done flash).
+    for (const selector of ['#iw-vig.on', '#iw-grain', '#iw-xpbar.pulse', '.iw-qslot.done']) {
+      const rules = ruleFor(selector);
+      expect(rules.length, `missing body.iw-reduce-flashing rule for ${selector}`)
+        .toBeGreaterThan(0);
+      for (const r of rules) {
+        expect(r.body, `${selector} rule must disable its animation`)
+          .toMatch(/animation:\s*none/);
+      }
+    }
+  });
+
+  it('keeps the low-health warning visible as a static non-zero opacity', () => {
+    const rules = ruleFor('#iw-vig.on');
+    expect(rules.length).toBeGreaterThan(0);
+    const opacity = rules
+      .map((r) => r.body.match(/opacity:\s*([\d.]+)/))
+      .find(Boolean);
+    expect(opacity, '#iw-vig.on must keep a static opacity when unpulsed').toBeTruthy();
+    expect(Number(opacity[1])).toBeGreaterThan(0);
+  });
+
+  it('does not disturb the existing body.iw-high-contrast rules', () => {
+    // The shipped high-contrast declarations must still exist verbatim (no
+    // regression to that feature), and the new block must be additive: its
+    // rules never target the high-contrast class and never rewrite it.
+    expect(HUD_SRC).toContain('body.iw-high-contrast #iw-xh.drawing .iw-retarc');
+    expect(HUD_SRC).toContain('body.iw-high-contrast #iw-xh.full .iw-retarc{stroke:#ffffff;stroke-width:5;}');
+    expect(HUD_SRC).toContain('body.iw-high-contrast #iw-xh.full .iw-retbg{stroke:rgba(255,255,255,.55);}');
+    for (const m of HUD_SRC.matchAll(REDUCED_RULE)) {
+      expect(m[1]).not.toContain('iw-high-contrast');
+    }
+  });
+
+  it('leaves the start screen iwpulse affordance untouched (pre-run, out of scope)', () => {
+    // The reduction must target only the named flashing layers, never a
+    // blanket ancestor selector that would kill the title screen pulse.
+    for (const m of HUD_SRC.matchAll(REDUCED_RULE)) {
+      for (const forbidden of ['iw-clickbegin', 'iwpulse', 'iw-start', '#iw-hud']) {
+        expect(m[1], `reduced rule must not target ${forbidden}`).not.toContain(forbidden);
+      }
+    }
+  });
+
+  it('pins the targeted base rules so a rename breaks the suite', () => {
+    for (const selector of ['#iw-vig.on{animation:iwvig', '#iw-grain{', '#iw-xpbar.pulse{']) {
+      expect(HUD_SRC, `base rule for ${selector} must exist in hud.js`)
+        .toContain(selector);
+    }
+    expect(QUESTS_SRC, 'base .iw-qslot.done animation must exist in quests.js')
+      .toContain('.iw-qslot.done{');
+    expect(QUESTS_SRC).toContain('animation:iwqflash');
+    // Static layers that must survive the reduction: no reduced rule may hide
+    // them or drop the grain texture - only their animation is removed.
+    for (const m of HUD_SRC.matchAll(REDUCED_RULE)) {
+      expect(m[2], `${m[1].trim()} must not hide the layer`).not.toMatch(/display:\s*none/);
+      expect(m[2], `${m[1].trim()} must not drop the texture`).not.toMatch(/background:\s*none/);
+    }
+  });
+});
 
 describe('computeUiScale (priority + clamping)', () => {
   beforeEach(() => vi.resetModules());

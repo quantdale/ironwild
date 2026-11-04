@@ -3,8 +3,18 @@
 //   path (localStorage pre-seed -> loadSettings -> a11y/hud appliers);
 // - live settingsChanged updates reach consumers without reload;
 // - every spawned machine owns exactly one animator; death disposes it.
+// Extended for honor-accessibility-preferences: the REDUCE FLASHING preference
+// must apply live and on boot (body class 'iw-reduce-flashing'), must change
+// the RENDERED state of the flashing layers (computed animation-name on
+// #iw-vig / #iw-grain), and must round-trip through 'ironwild-settings'.
 import { expect, test } from "@playwright/test";
-import { gotoGame, startGame, SWGL_POLL_MS, SWGL_SPEC_MS } from "./helpers.js";
+import {
+  gotoGame,
+  startGame,
+  watchConsole,
+  SWGL_POLL_MS,
+  SWGL_SPEC_MS,
+} from "./helpers.js";
 
 test("persisted a11y settings apply through boot and update live", async ({
   page,
@@ -124,4 +134,171 @@ test("every live machine has exactly one animator; death disposes it", async ({
       { timeout: SWGL_POLL_MS }, // one frame suffices; the budget outlasts frame GAPS
     )
     .toBe(true);
+});
+
+// --- honor-accessibility-preferences: REDUCE FLASHING lifecycle -------------
+
+test("reduceFlashing is absent by default and applies at boot when persisted", async ({
+  page,
+}) => {
+  const consoleLog = watchConsole(page); // attach BEFORE navigation
+
+  // Default (nothing saved): no body class, and the flashing layers animate.
+  await gotoGame(page);
+  const defaulted = await page.evaluate(() => ({
+    cls: document.body.classList.contains("iw-reduce-flashing"),
+    stored: JSON.parse(localStorage.getItem("ironwild-settings") || "{}"),
+    grainAnimation: getComputedStyle(document.querySelector("#iw-grain"))
+      .animationName,
+  }));
+  expect(defaulted.cls).toBe(false);
+  expect(defaulted.stored.reduceFlashing ?? false).toBe(false);
+  expect(defaulted.grainAnimation).toBe("iwgrain"); // negative control (5.3)
+
+  // Persist the preference the way the settings modal does (whole object).
+  await page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem("ironwild-settings") || "{}");
+    s.reduceFlashing = true;
+    localStorage.setItem("ironwild-settings", JSON.stringify(s));
+  });
+
+  // Fresh boot: the class must be on <body> before any flashing effect can
+  // run (loadSettings -> createA11y -> apply() during boot).
+  await gotoGame(page);
+  const booted = await page.evaluate(() => ({
+    cls: document.body.classList.contains("iw-reduce-flashing"),
+    a11y: window.__IW_A11Y.reduceFlashing,
+    stored: JSON.parse(localStorage.getItem("ironwild-settings")),
+  }));
+  expect(booted.cls).toBe(true);
+  expect(booted.a11y).toBe(true);
+  expect(booted.stored.reduceFlashing).toBe(true); // round-trip intact
+
+  // Restore defaults so other specs start clean.
+  await page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem("ironwild-settings") || "{}");
+    delete s.reduceFlashing;
+    localStorage.setItem("ironwild-settings", JSON.stringify(s));
+  });
+
+  const { console: consoleOffenses, pageErrors } = consoleLog.offenses();
+  expect(pageErrors, "uncaught page errors").toEqual([]);
+  expect(consoleOffenses, "console errors across the preference change").toEqual(
+    [],
+  );
+});
+
+test("reduceFlashing damps the low-health vignette pulse but keeps the warning", async ({
+  page,
+}) => {
+  test.setTimeout(SWGL_SPEC_MS); // starved-host ceiling; hardware exits fast
+  const consoleLog = watchConsole(page); // attach BEFORE navigation
+  await startGame(page);
+
+  // Negative control first (5.3): preference OFF -> the pulsing layer keeps a
+  // non-none animation name, proving the assertion below is meaningful.
+  await page.evaluate(() => {
+    window.__IW.G.settings.reduceFlashing = false;
+    window.__IW.bus.emit("settingsChanged", {
+      key: "reduceFlashing",
+      value: false,
+    });
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        document.body.classList.contains("iw-reduce-flashing"),
+      ),
+    )
+    .toBe(false);
+
+  // Force health below the low-health threshold (hpF < 0.3 in hud.js
+  // updateHUD) and wait for the real frame loop to flag the vignette.
+  await page.evaluate(() => {
+    const p = window.__IW.G.player;
+    p.hp = p.maxHp * 0.1;
+  });
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() =>
+          document.querySelector("#iw-vig").classList.contains("on"),
+        ),
+      { timeout: SWGL_POLL_MS },
+    )
+    .toBe(true);
+
+  const offState = await page.evaluate(() => {
+    const vig = document.querySelector("#iw-vig");
+    return {
+      animation: getComputedStyle(vig).animationName,
+      opacity: parseFloat(getComputedStyle(vig).opacity),
+    };
+  });
+  expect(offState.animation).not.toBe("none"); // pulses while OFF
+  expect(offState.opacity).toBeGreaterThan(0); // the 0.25..0.85 keyframe frame
+
+  // Live toggle: no reload, no re-entering gameplay - the class must flip now.
+  await page.evaluate(() => {
+    window.__IW.G.settings.reduceFlashing = true;
+    window.__IW.bus.emit("settingsChanged", {
+      key: "reduceFlashing",
+      value: true,
+    });
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        document.body.classList.contains("iw-reduce-flashing"),
+      ),
+    )
+    .toBe(true);
+
+  const onState = await page.evaluate(() => {
+    const vig = document.querySelector("#iw-vig");
+    return {
+      stillOn: vig.classList.contains("on"),
+      animation: getComputedStyle(vig).animationName,
+      opacity: parseFloat(getComputedStyle(vig).opacity),
+      grainAnimation: getComputedStyle(document.querySelector("#iw-grain"))
+        .animationName,
+    };
+  });
+  // Rendered state (5.2): the layer stays ON (the warning is kept) but its
+  // computed animation is gone and the static opacity is non-zero.
+  expect(onState.stillOn).toBe(true);
+  expect(onState.animation).toBe("none");
+  expect(onState.opacity).toBeGreaterThan(0);
+  expect(onState.grainAnimation).toBe("none"); // grain texture stays, motion dies
+
+  // Disabling restores the animated behavior (spec scenario).
+  await page.evaluate(() => {
+    window.__IW.G.settings.reduceFlashing = false;
+    window.__IW.bus.emit("settingsChanged", {
+      key: "reduceFlashing",
+      value: false,
+    });
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          getComputedStyle(document.querySelector("#iw-vig")).animationName,
+      ),
+    )
+    .toBe("iwvig"); // exact restore: the pulse keyframe, not just "not none"
+
+  // Console stays clean across the preference change (5.4): toggling must not
+  // log missing-element or style errors.
+  const { console: consoleOffenses, pageErrors } = consoleLog.offenses();
+  expect(pageErrors, "uncaught page errors across the live toggle").toEqual([]);
+  expect(consoleOffenses, "console errors across the live toggle").toEqual([]);
+
+  // Leave the run clean for the next spec.
+  await page.evaluate(() => {
+    window.__IW.G.player.hp = window.__IW.G.player.maxHp;
+    const s = JSON.parse(localStorage.getItem("ironwild-settings") || "{}");
+    delete s.reduceFlashing;
+    localStorage.setItem("ironwild-settings", JSON.stringify(s));
+  });
 });

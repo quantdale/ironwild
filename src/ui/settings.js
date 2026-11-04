@@ -32,7 +32,7 @@ const DIFFICULTIES = ['normal', 'hardened'];
 // in core/state.js) so old saves and fresh boots both end up complete.
 const A11Y_DEFAULTS = {
   camShakeScale: 1,      // 0..1 multiplier on camera impact shake
-  reduceFlashing: false, // damp HUD flash overlays (hit vignette, reticle kick)
+  reduceFlashing: false, // damp flashing: low-hp vignette pulse, grain animation, xp pulse, lightning flash
   uiScale: 1,            // 0.85..1.3, exposed as --iw-ui-scale by ui/a11y.js
   highContrastCues: false,
   aimAssist: 0,          // 0..1 magnetism strength (consumers read >=0.01)
@@ -303,7 +303,7 @@ function buildDom() {
         <span class="iw-set-val"></span>
       </div>
       <div class="iw-set-row">
-        <span class="iw-set-label">REDUCE FLASHING</span>
+        <span class="iw-set-label" title="Damps flashing and pulsing effects: low-health vignette pulse, grain animation, XP-bar flash, and storm lightning. The low-health warning stays visible as a steady overlay.">REDUCE FLASHING</span>
         <input type="checkbox" id="iw-set-flash">
         <span class="iw-set-val"></span>
       </div>

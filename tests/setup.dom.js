@@ -12,10 +12,34 @@ globalThis.window = {
   devicePixelRatio: 1,
 };
 
+// Minimal Set-backed classList: enough for ui/a11y.js to toggle its body
+// classes ('iw-high-contrast', 'iw-reduce-flashing') and for tests to observe
+// which classes it drives. Still no DOM emulation - just the one surface the
+// preference applier needs.
+function makeClassList() {
+  const set = new Set();
+  return {
+    add: (c) => set.add(c),
+    remove: (c) => set.delete(c),
+    toggle: (c, force) => {
+      const on = force === undefined ? !set.has(c) : !!force;
+      if (on) set.add(c);
+      else set.delete(c);
+      return on;
+    },
+    contains: (c) => set.has(c),
+  };
+}
+
 globalThis.document = {
   addEventListener: () => {},
   removeEventListener: () => {},
   hidden: false,
+  // ui/a11y.js writes --iw-ui-scale on <html> before toggling body classes;
+  // without a documentElement.style the try/catch would swallow the whole
+  // apply() and the body-class assertions could never observe a toggle.
+  documentElement: { style: { setProperty: () => {} } },
+  body: { classList: makeClassList() },
 };
 
 // In-memory localStorage: same API surface the save/settings code uses.
